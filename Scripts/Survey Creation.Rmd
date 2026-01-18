@@ -1,0 +1,878 @@
+---
+title: "IRIS Survey Creation"
+author: "BPR"
+date: "2024-07-24"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(here)
+i_am("./Survey Creation.Rmd")
+library(readxl)
+library(tidyverse)
+```
+```{r readQuestions}
+#| include: FALSE
+#| message: FALSE
+#| warning: FALSE
+#| 
+read_xlsx(here("Scales_Subscales_Item Rotations.xlsx"),
+          range = "E1:I97") ->
+  questions_df
+c("Scale", "Subscale1", "Subscale2", "Item", "Statement") ->
+  colnames(questions_df)
+
+read_xlsx(here("Scales_Subscales_Item Rotations.xlsx"),
+          range = "A1:D97") %>%
+  na.omit() ->
+  descriptors_df
+
+# descriptors_df$Scale
+#  [1] "PSQ-8"                 "MSPSS"                
+#  [3] "CSE-T"                 "ROE"                  
+#  [5] "Brief COPE"            "PANAS-SF"             
+#  [7] "LSEQ"                  "PROMIS PI-SF 3a V1.00"
+#  [9] "PROMIS PI-SF 8a"       "PTGI-SF" 
+
+```
+```{r scaleInstructions}
+#| include: FALSE
+descriptors_df$Instructions[1] -> psq8_instructions
+descriptors_df$`Rating Anchors`[1] -> psq8_anchor
+descriptors_df$Instructions[2] -> mspss_instructions
+descriptors_df$`Rating Anchors`[2] -> mspss_anchor
+descriptors_df$Instructions[3] -> cset_instructions
+descriptors_df$`Rating Anchors`[3] -> cset_anchor
+descriptors_df$Instructions[4] -> roe_instructions
+descriptors_df$`Rating Anchors`[4] -> roe_anchor
+descriptors_df$Instructions[5] -> cope_instructions
+descriptors_df$`Rating Anchors`[5] -> cope_anchor
+descriptors_df$Instructions[6] -> panas_instructions
+descriptors_df$`Rating Anchors`[6] -> panas_anchor
+descriptors_df$Instructions[7] -> lseq_instructions
+descriptors_df$`Rating Anchors`[7] -> lseq_anchor
+descriptors_df$Instructions[8] -> promis3a_instructions
+descriptors_df$`Rating Anchors`[8] -> promis3a_anchor
+descriptors_df$Instructions[9] -> promis8a_instructions
+descriptors_df$`Rating Anchors`[9] -> promis8a_anchor
+descriptors_df$Instructions[10] -> ptgi_instructions
+descriptors_df$`Rating Anchors`[10] -> ptgi_anchor
+```
+```{r splitQuestions}
+#| include: FALSE
+#| message: FALSE
+
+# Separate by scale
+# From: https://stackoverflow.com/questions/70553101/creating-individual-dataframes-from-a-grouped-dataframe
+# Be careful! This only works if questions_df is sorted by Scale!
+setNames(
+  questions_df %>%
+    group_split(Scale),
+  paste0(unique(questions_df$Scale),
+         "_df")) %>%
+  list2env(envir = globalenv())
+
+```
+For each of 12 surveys, need to add the following:
+
+Questions:
+
+- PSQ-8: Do we care that on one day they get Q4 & Q5 rather than questions from two different subscales? (If so, swap positions 14 and 15)
+
+
+PSQ-8	8-Item Perceived Stress Questionnaire
+MSPSS	Multidimensional Scale of Perceived Social Support
+CSE-T	Trauma Coping Self-Efficacy
+ROE	Recovery Outcome Expectancy
+Brief COPE	Coping Orientation to Problems Experienced Inventory
+PANAS-SF	Positive and Negative Affect Schedule – Short Form
+LSEQ	Leeds Sleep Evaluation Questionnaire
+PROMIS® PI-SF 3a V1.0	Patient-Reported Outcomes Measurement Information System – Pain Intensity – Short Form 3a V1.0
+PROMIS® PI-SF 8a	Patient-Reported Outcomes Measurement Information System – Pain Interference – Short Form 8a
+PTGI	Posttraumatic Growth Inventory
+
+PSQ-8 (1&8; 2&6; 3&7; 4&5) - 2 questions (3 rounds of 8 total)
+CSE-T (1-9) - 3 questions (4 rounds of 9 total)
+MSPSS (1,2,5&10; 3,4,8&11; 6,7,9&12) - 3 questions (2 rounds of 12 total)
+Brief COPE (1-12; 13-24) - 4 questions (2 rounds of 6 total)
+PANAS-SF (1,3,5,9,10,12,14,16&17; 2,4,6,7,8,11,13,15,18&20) - 5 questions (3 rounds of 20 total)
+
+LSEQ (1-2) - 0 questions (evening) or 2 questions (morning)
+PROMIS® PI-SF 3a V1.0 (1) - 1 question
+PROMIS® PI-SF 8a (1) - 1 question
+
+ROE (1-5) - 2 questions (????)
+PTGI (1,2&13; 5&18; 4,10,12&19; 3,7,11,14&17; 6,8,9,15,16,20&21) - 5 questions (won't be all equal, so as to fit into a 4-day rotation.)
+```{r scaleRotations}
+# Can't use rep(sample()) because you get the same thing each rep!
+set.seed(19390425)
+
+# Unidimensional scales
+c(sample(1:8, replace = FALSE),
+  sample(1:8, replace = FALSE),
+  sample(1:8, replace = FALSE)) -> 
+  psq8_items                                # 2 items/survey * 12 = 24
+c(sample(1:9, replace = FALSE),
+  sample(1:9, replace = FALSE),
+  sample(1:9, replace = FALSE),
+  sample(1:9, replace = FALSE)) -> 
+  cset_items                                # 3 items/survey * 12 = 36
+
+# Scales with subscales
+# MSPSS: Each time get one of each subscale, and one random one.
+# With the new Excel file, the subscales are 1:4, 5:8, and 9:12
+as.vector(                                  # 2 items/survey * 12 = 24
+  matrix(
+    c(sample(c(1:4), replace = FALSE),
+      sample(c(1:4), replace = FALSE),
+      sample(c(1:4), replace = FALSE),
+      sample(c(5:8), replace = FALSE),
+      sample(c(5:8), replace = FALSE),
+      sample(c(5:8), replace = FALSE),
+      sample(c(9:12), replace = FALSE),
+      sample(c(9:12), replace = FALSE),
+      sample(c(9:12), replace = FALSE),
+      rep(NA, 12)),                         # Need to handle no repeats
+    ncol = 12,
+    nrow = 4,
+    byrow = TRUE)) -> 
+  mspss_items                               # 4 items/survey * 12 = 48
+# Complete the NA
+sample(1:12, replace = FALSE) -> 
+  na_replace
+for(index in 1:12) {
+  if(na_replace[index] %in% ((index-1)*4):(index*4)) {
+    if(index < 12) {
+      na_replace[index+1] -> temp
+      na_replace[index] -> na_replace[index+1]
+      temp -> na_replace[index]
+    }
+  }
+  na_replace[index] -> mspss_items[index*4]
+#  print(mspss_items[((index-1)*4 + 1):(index*4)]) # For checking
+}
+# Check these! Fix by hand if needed. That's indices 2, 8, 9, and 10
+# Nota bene: The indices are correct only if this chunk is run 
+#  altogether, so that this is a reproducible check
+12 -> mspss_items[8]
+11 -> mspss_items[32]
+3 -> mspss_items[36]
+6 -> mspss_items[40]
+
+as.vector(c(sample(x = c(1:10), replace = FALSE),
+  sample(x = c(1:10), replace = FALSE),
+  sample(x = c(1:10), replace = FALSE))) -> 
+  positive
+as.vector(c(sample(x = c(11:20), replace = FALSE),
+  sample(x = c(11:20), replace = FALSE),
+  sample(x = c(11:20), replace = FALSE))) -> 
+  negative
+c(positive[1:2], negative[1:3],
+  positive[3:5], negative[4:5],
+  positive[6:7], negative[6:8],
+  positive[8:10], negative[9:10],
+  positive[11:12], negative[11:13],
+  positive[13:15], negative[14:15],
+  positive[16:17], negative[16:18],
+  positive[18:20], negative[19:20],
+  positive[21:22], negative[21:23],
+  positive[23:25], negative[24:25],
+  positive[26:27], negative[26:28],
+  positive[28:30], negative[29:30]) ->
+  panas_items
+
+as.vector(
+    sample(x = c(9:10), replace = FALSE)) ->
+  appreciate
+as.vector(
+    sample(x = c(7:8), replace = FALSE)) ->
+  spiritual
+as.vector(
+    sample(x = c(5:6), replace = FALSE)) ->
+  strength
+as.vector(
+    sample(x = c(3:4), replace = FALSE)) ->
+  possibilities
+as.vector(
+    sample(x = c(1:2), replace = FALSE)) ->
+  relate
+
+# Items 5 and 10 comprise the “Relating to Others” subscale. Items 3 and 6
+# constitute the “New Possibilities” subscale. Items 7 and 9 comprise the
+# “Personal Strength” subscale. Items 4 and 8 constitute the “Spiritual Change”
+# subscale. Items 1 and 2 constitute the “Appreciation of Life” subscale. 
+
+rep(c(appreciate[1], spiritual[1], strength[1], possibilities[1], relate[1],
+  appreciate[2], spiritual[2], strength[2], possibilities[2], relate[2]), 6) ->
+  ptgi_items
+
+# For ROE, items 1, 2, and 6 have negative words; 3, 4, and 5 do not. Hence,
+#  even though it is not marked as 2-dimensional, it is.
+as.vector(                                  # 1,2,6 vs. 3,4,5
+  matrix(c(sample(x = c(1,2,6), replace = FALSE),
+           sample(x = c(1,2,6), replace = FALSE),
+           sample(x = c(1,2,6), replace = FALSE),
+           sample(x = c(1,2,6), replace = FALSE),
+           sample(x = c(3:5), replace = FALSE),
+           sample(x = c(3:5), replace = FALSE),
+           sample(x = c(3:5), replace = FALSE),
+           sample(x = c(3:5), replace = FALSE)),
+         ncol = 12,
+         nrow = 2,
+         byrow = TRUE)) ->
+    roe_items
+
+# For COPE: 2 each survey from 1:12 and 2 each survey from 13:26.
+as.vector(
+  matrix(c(sample(x = c(1:12), replace = FALSE),
+  sample(x = c(1:12), replace = FALSE)),
+  ncol = 2,
+  nrow = 12,
+  byrow = TRUE)) -> 
+  approach
+as.vector(
+  matrix(c(sample(x = c(13:26), replace = FALSE),
+  sample(x = c(13:26), replace = FALSE)),
+  ncol = 2,
+  nrow = 14,
+  byrow = TRUE)) -> 
+  avoid
+as.vector(
+  c(sample(x = 27:28, replace = FALSE),
+    sample(x = 27:28, replace = FALSE))) ->
+  humor
+
+c(approach[1:2], avoid[1:2],
+  approach[3:4], avoid[3:4],
+  approach[5:6], avoid[5:6],
+  approach[7:8], avoid[7:8],
+  approach[9:10], avoid[9], humor[1],
+  approach[11:12], avoid[10], humor[2],
+  approach[13:14], avoid[11:13],
+  approach[15:16], avoid[14:16],
+  approach[17:18], avoid[17:19], humor[3],
+  approach[19:20], avoid[20:22],
+  approach[21:22], avoid[23:25], humor[4],
+  approach[23:24], avoid[26:28]) ->
+  cope_items
+
+
+# Assign directly: LSEQ, PROMIS3a PROMIS8a (4 morning, 2 evening)
+
+# Total questions:
+# cope: 56/12 = 4 r 8. In the evenings, ask 2, 2, 1, 1, 1, and 1 extra
+#       cope questions. Doing things as lists rather than df will allow
+#       this to not matter. In the mornings, ask 4 questions each day.
+# cset: 36/12 = 3
+# mspss: 36/12 = 3
+# panas: 60/12 = 5
+# psq8: 24/12 = 2
+# ptgi: 60/12 = 5
+# roe: 24/12 = 2
+# subtotal items: 24
+# Plus 2 @ PROMIS, and in the morning, 2 @ LSEQ, and evenings either
+#  2 or 1 additional cope.
+# Total items per survey: 27 (4 evenings) or 28 (2 evenings and each
+#  morning).
+```
+
+The 12 surveys will be created from each of 12 lists, with each list having cope, cset, mspss, etc. as their elements. After creation, the elements will be randomized within each list to create the surveys.
+```{r createLists}
+#| include: FALSE
+
+# Set up blank lists
+list("cope" = NA,
+     "cset" = NA,
+     "lseq" = NA,
+     "mspss" = NA,
+     "panas" = NA,
+     "prom3" = NA,
+     "prom8" = NA,
+     "psq8" = NA,
+     "ptgi" = NA,
+     "roe" = NA) ->
+  ma_ls ->
+  mb_ls ->
+  mc_ls ->
+  md_ls ->
+  me_ls ->
+  mf_ls ->
+  ea_ls ->
+  eb_ls ->
+  ec_ls ->
+  ed_ls ->
+  ee_ls ->
+  ef_ls
+NULL ->                                     # Evening lists do not have
+  ea_ls$lseq ->                             #  lseq
+  eb_ls$lseq ->
+  ec_ls$lseq ->
+  ed_ls$lseq ->
+  ee_ls$lseq ->
+  ef_ls$lseq
+
+# Fill lists
+
+# Morning A
+c(cope_instructions,
+  cope_anchor,
+  COPE_df$Statement[cope_items[1:4]]) ->
+  ma_ls$cope
+c(cset_instructions,
+  cset_anchor,
+  CSET_df$Statement[cset_items[1:3]]) ->
+  ma_ls$cset
+c(lseq_instructions,
+  lseq_anchor,
+  LSEQ_df$Statement[1:2]) ->
+  ma_ls$lseq
+c(mspss_instructions,
+  mspss_anchor,
+  MSPSS_df$Statement[mspss_items[1:4]]) ->
+  ma_ls$mspss
+c(panas_instructions,
+  panas_anchor,
+  PANAS_df$Statement[panas_items[1:4]]) ->
+  ma_ls$panas
+c(promis3a_instructions,
+  promis3a_anchor,
+  PROMIS3a_df$Statement[1]) ->
+  ma_ls$prom3
+c(promis8a_instructions,
+  promis8a_anchor,
+  PROMIS8a_df$Statement[1]) ->
+  ma_ls$prom8
+c(psq8_instructions,
+  psq8_anchor,
+  PSQ8_df$Statement[psq8_items[1:2]]) ->
+  ma_ls$psq8
+c(ptgi_instructions,
+  ptgi_anchor,
+  PTGI_df$Statement[ptgi_items[1:5]]) ->
+  ma_ls$ptgi
+c(roe_instructions,
+  roe_anchor,
+  ROE_df$Statement[roe_items[1:2]]) ->
+  ma_ls$roe
+
+# Morning B
+c(cope_instructions,
+  cope_anchor,
+  COPE_df$Statement[cope_items[5:8]]) ->
+  mb_ls$cope
+c(cset_instructions,
+  cset_anchor,
+  CSET_df$Statement[cset_items[4:6]]) ->
+  mb_ls$cset
+c(lseq_instructions,
+  lseq_anchor,
+  LSEQ_df$Statement[1:2]) ->
+  mb_ls$lseq
+c(mspss_instructions,
+  mspss_anchor,
+  MSPSS_df$Statement[mspss_items[5:8]]) ->
+  mb_ls$mspss
+c(panas_instructions,
+  panas_anchor,
+  PANAS_df$Statement[panas_items[5:8]]) ->
+  mb_ls$panas
+c(promis3a_instructions,
+  promis3a_anchor,
+  PROMIS3a_df$Statement[1]) ->
+  mb_ls$prom3
+c(promis3a_instructions,
+  promis3a_anchor,
+  PROMIS8a_df$Statement[1]) ->
+  mb_ls$prom8
+c(psq8_instructions,
+  psq8_anchor,
+  PSQ8_df$Statement[psq8_items[3:4]]) ->
+  mb_ls$psq8
+c(ptgi_instructions,
+  ptgi_anchor,
+  PTGI_df$Statement[ptgi_items[6:10]]) ->
+  mb_ls$ptgi
+c(roe_instructions,
+  roe_anchor,
+  ROE_df$Statement[roe_items[3:4]]) ->
+  mb_ls$roe
+
+# Morning C
+c(cope_instructions,
+  cope_anchor,
+  COPE_df$Statement[cope_items[9:12]]) ->
+  mc_ls$cope
+c(cset_instructions,
+  cset_anchor,
+  CSET_df$Statement[cset_items[7:9]]) ->
+  mc_ls$cset
+c(lseq_instructions,
+  lseq_anchor,
+  LSEQ_df$Statement[1:2]) ->
+  mc_ls$lseq
+c(mspss_instructions,
+  mspss_anchor,
+  MSPSS_df$Statement[mspss_items[9:12]]) ->
+  mc_ls$mspss
+c(panas_instructions,
+  panas_anchor,
+  PANAS_df$Statement[panas_items[9:12]]) ->
+  mc_ls$panas
+c(promis3a_instructions,
+  promis3a_anchor,
+  PROMIS3a_df$Statement[1]) ->
+  mc_ls$prom3
+c(promis3a_instructions,
+  promis3a_anchor,
+  PROMIS8a_df$Statement[1]) ->
+  mc_ls$prom8
+c(psq8_instructions,
+  psq8_anchor,
+  PSQ8_df$Statement[psq8_items[5:6]]) ->
+  mc_ls$psq8
+c(ptgi_instructions,
+  ptgi_anchor,
+  PTGI_df$Statement[ptgi_items[11:15]]) ->
+  mc_ls$ptgi
+c(roe_instructions,
+  roe_anchor,
+  ROE_df$Statement[roe_items[5:6]]) ->
+  mc_ls$roe
+
+# Morning D
+c(cope_instructions,
+  cope_anchor,
+  COPE_df$Statement[cope_items[13:16]]) ->
+  md_ls$cope
+c(cset_instructions,
+  cset_anchor,
+  CSET_df$Statement[cset_items[10:12]]) ->
+  md_ls$cset
+c(lseq_instructions,
+  lseq_anchor,
+  LSEQ_df$Statement[1:2]) ->
+  md_ls$lseq
+c(mspss_instructions,
+  mspss_anchor,
+  MSPSS_df$Statement[mspss_items[13:16]]) ->
+  md_ls$mspss
+c(panas_instructions,
+  panas_anchor,
+  PANAS_df$Statement[panas_items[13:16]]) ->
+  md_ls$panas
+c(promis3a_instructions,
+  promis3a_anchor,
+  PROMIS3a_df$Statement[1]) ->
+  md_ls$prom3
+c(promis3a_instructions,
+  promis3a_anchor,
+  PROMIS8a_df$Statement[1]) ->
+  md_ls$prom8
+c(psq8_instructions,
+  psq8_anchor,
+  PSQ8_df$Statement[psq8_items[7:8]]) ->
+  md_ls$psq8
+c(ptgi_instructions,
+  ptgi_anchor,
+  PTGI_df$Statement[ptgi_items[16:20]]) ->
+  md_ls$ptgi
+c(roe_instructions,
+  roe_anchor,
+  ROE_df$Statement[roe_items[7:8]]) ->
+  md_ls$roe
+
+# Morning E
+c(cope_instructions,
+  cope_anchor,
+  COPE_df$Statement[cope_items[17:20]]) ->
+  me_ls$cope
+c(cset_instructions,
+  cset_anchor,
+  CSET_df$Statement[cset_items[13:15]]) ->
+  me_ls$cset
+c(lseq_instructions,
+  lseq_anchor,
+  LSEQ_df$Statement[1:2]) ->
+  me_ls$lseq
+c(mspss_instructions,
+  mspss_anchor,
+  MSPSS_df$Statement[mspss_items[17:20]]) ->
+  me_ls$mspss
+c(panas_instructions,
+  panas_anchor,
+  PANAS_df$Statement[panas_items[17:20]]) ->
+  me_ls$panas
+c(promis3a_instructions,
+  promis3a_anchor,
+  PROMIS3a_df$Statement[1]) ->
+  me_ls$prom3
+c(promis3a_instructions,
+  promis3a_anchor,
+  PROMIS8a_df$Statement[1]) ->
+  me_ls$prom8
+c(psq8_instructions,
+  psq8_anchor,
+  PSQ8_df$Statement[psq8_items[9:10]]) ->
+  me_ls$psq8
+c(ptgi_instructions,
+  ptgi_anchor,
+  PTGI_df$Statement[ptgi_items[21:25]]) ->
+  me_ls$ptgi
+c(roe_instructions,
+  roe_anchor,
+  ROE_df$Statement[roe_items[9:10]]) ->
+  me_ls$roe
+
+# Morning F
+c(cope_instructions,
+  cope_anchor,
+  COPE_df$Statement[cope_items[21:24]]) ->
+  mf_ls$cope
+c(cset_instructions,
+  cset_anchor,
+  CSET_df$Statement[cset_items[16:18]]) ->
+  mf_ls$cset
+c(lseq_instructions,
+  lseq_anchor,
+  LSEQ_df$Statement[1:2]) ->
+  mf_ls$lseq
+c(mspss_instructions,
+  mspss_anchor,
+  MSPSS_df$Statement[mspss_items[21:24]]) ->
+  mf_ls$mspss
+c(panas_instructions,
+  panas_anchor,
+  PANAS_df$Statement[panas_items[21:24]]) ->
+  mf_ls$panas
+c(promis3a_instructions,
+  promis3a_anchor,
+  PROMIS3a_df$Statement[1]) ->
+  mf_ls$prom3
+c(promis3a_instructions,
+  promis3a_anchor,
+  PROMIS8a_df$Statement[1]) ->
+  mf_ls$prom8
+c(psq8_instructions,
+  psq8_anchor,
+  PSQ8_df$Statement[psq8_items[11:12]]) ->
+  mf_ls$psq8
+c(ptgi_instructions,
+  ptgi_anchor,
+  PTGI_df$Statement[ptgi_items[26:30]]) ->
+  mf_ls$ptgi
+c(roe_instructions,
+  roe_anchor,
+  ROE_df$Statement[roe_items[11:12]]) ->
+  mf_ls$roe
+
+# Evening A
+c(cope_instructions,
+  cope_anchor,
+  COPE_df$Statement[cope_items[25:29]]) ->
+  ea_ls$cope
+c(cset_instructions,
+  cset_anchor,
+  CSET_df$Statement[cset_items[19:21]]) ->
+  ea_ls$cset
+c(mspss_instructions,
+  mspss_anchor,
+  MSPSS_df$Statement[mspss_items[25:28]]) ->
+  ea_ls$mspss
+c(panas_instructions,
+  panas_anchor,
+  PANAS_df$Statement[panas_items[25:28]]) ->
+  ea_ls$panas
+c(promis3a_instructions,
+  promis3a_anchor,
+  PROMIS3a_df$Statement[1]) ->
+  ea_ls$prom3
+c(promis3a_instructions,
+  promis3a_anchor,
+  PROMIS8a_df$Statement[1]) ->
+  ea_ls$prom8
+c(psq8_instructions,
+  psq8_anchor,
+  PSQ8_df$Statement[psq8_items[13:14]]) ->
+  ea_ls$psq8
+c(ptgi_instructions,
+  ptgi_anchor,
+  PTGI_df$Statement[ptgi_items[31:35]]) ->
+  ea_ls$ptgi
+c(roe_instructions,
+  roe_anchor,
+  ROE_df$Statement[roe_items[13:14]]) ->
+  ea_ls$roe
+
+# Evening B
+c(cope_instructions,
+  cope_anchor,
+  COPE_df$Statement[cope_items[30:34]]) ->
+  eb_ls$cope
+c(cset_instructions,
+  cset_anchor,
+  CSET_df$Statement[cset_items[22:24]]) ->
+  eb_ls$cset
+c(mspss_instructions,
+  mspss_anchor,
+  MSPSS_df$Statement[mspss_items[29:32]]) ->
+  eb_ls$mspss
+c(panas_instructions,
+  panas_anchor,
+  PANAS_df$Statement[panas_items[29:32]]) ->
+  eb_ls$panas
+c(promis3a_instructions,
+  promis3a_anchor,
+  PROMIS3a_df$Statement[1]) ->
+  eb_ls$prom3
+c(promis3a_instructions,
+  promis3a_anchor,
+  PROMIS8a_df$Statement[1]) ->
+  eb_ls$prom8
+c(psq8_instructions,
+  psq8_anchor,
+  PSQ8_df$Statement[psq8_items[15:16]]) ->
+  eb_ls$psq8
+c(ptgi_instructions,
+  ptgi_anchor,
+  PTGI_df$Statement[ptgi_items[36:40]]) ->
+  eb_ls$ptgi
+c(roe_instructions,
+  roe_anchor,
+  ROE_df$Statement[roe_items[15:16]]) ->
+  eb_ls$roe
+
+# Evening C
+c(cope_instructions,
+  cope_anchor,
+  COPE_df$Statement[cope_items[35:40]]) ->
+  ec_ls$cope
+c(cset_instructions,
+  cset_anchor,
+  CSET_df$Statement[cset_items[25:27]]) ->
+  ec_ls$cset
+c(mspss_instructions,
+  mspss_anchor,
+  MSPSS_df$Statement[mspss_items[33:36]]) ->
+  ec_ls$mspss
+c(panas_instructions,
+  panas_anchor,
+  PANAS_df$Statement[panas_items[33:36]]) ->
+  ec_ls$panas
+c(promis3a_instructions,
+  promis3a_anchor,
+  PROMIS3a_df$Statement[1]) ->
+  ec_ls$prom3
+c(promis3a_instructions,
+  promis3a_anchor,
+  PROMIS8a_df$Statement[1]) ->
+  ec_ls$prom8
+c(psq8_instructions,
+  psq8_anchor,
+  PSQ8_df$Statement[psq8_items[17:18]]) ->
+  ec_ls$psq8
+c(ptgi_instructions,
+  ptgi_anchor,
+  PTGI_df$Statement[ptgi_items[41:45]]) ->
+  ec_ls$ptgi
+c(roe_instructions,
+  roe_anchor,
+  ROE_df$Statement[roe_items[17:18]]) ->
+  ec_ls$roe
+
+# Evening D
+c(cope_instructions,
+  cope_anchor,
+  COPE_df$Statement[cope_items[41:45]]) ->
+  ed_ls$cope
+c(cset_instructions,
+  cset_anchor,
+  CSET_df$Statement[cset_items[28:30]]) ->
+  ed_ls$cset
+c(mspss_instructions,
+  mspss_anchor,
+  MSPSS_df$Statement[mspss_items[37:40]]) ->
+  ed_ls$mspss
+c(panas_instructions,
+  panas_anchor,
+  PANAS_df$Statement[panas_items[37:40]]) ->
+  ed_ls$panas
+c(promis3a_instructions,
+  promis3a_anchor,
+  PROMIS3a_df$Statement[1]) ->
+  ed_ls$prom3
+c(promis3a_instructions,
+  promis3a_anchor,
+  PROMIS8a_df$Statement[1]) ->
+  ed_ls$prom8
+c(psq8_instructions,
+  psq8_anchor,
+  PSQ8_df$Statement[psq8_items[19:20]]) ->
+  ed_ls$psq8
+c(ptgi_instructions,
+  ptgi_anchor,
+  PTGI_df$Statement[ptgi_items[46:50]]) ->
+  ed_ls$ptgi
+c(roe_instructions,
+  roe_anchor,
+  ROE_df$Statement[roe_items[19:20]]) ->
+  ed_ls$roe
+
+# Evening E
+c(cope_instructions,
+  cope_anchor,
+  COPE_df$Statement[cope_items[46:51]]) ->
+  ee_ls$cope
+c(cset_instructions,
+  cset_anchor,
+  CSET_df$Statement[cset_items[31:33]]) ->
+  ee_ls$cset
+c(mspss_instructions,
+  mspss_anchor,
+  MSPSS_df$Statement[mspss_items[41:44]]) ->
+  ee_ls$mspss
+c(panas_instructions,
+  panas_anchor,
+  PANAS_df$Statement[panas_items[41:44]]) ->
+  ee_ls$panas
+c(promis3a_instructions,
+  promis3a_anchor,
+  PROMIS3a_df$Statement[1]) ->
+  ee_ls$prom3
+c(promis3a_instructions,
+  promis3a_anchor,
+  PROMIS8a_df$Statement[1]) ->
+  ee_ls$prom8
+c(psq8_instructions,
+  psq8_anchor,
+  PSQ8_df$Statement[psq8_items[21:22]]) ->
+  ee_ls$psq8
+c(ptgi_instructions,
+  ptgi_anchor,
+  PTGI_df$Statement[ptgi_items[51:55]]) ->
+  ee_ls$ptgi
+c(roe_instructions,
+  roe_anchor,
+  ROE_df$Statement[roe_items[21:22]]) ->
+  ee_ls$roe
+
+# Evening F
+c(cope_instructions,
+  cope_anchor,
+  COPE_df$Statement[cope_items[52:56]]) ->
+  ef_ls$cope
+c(cset_instructions,
+  cset_anchor,
+  CSET_df$Statement[cset_items[34:36]]) ->
+  ef_ls$cset
+c(mspss_instructions,
+  mspss_anchor,
+  MSPSS_df$Statement[mspss_items[45:48]]) ->
+  ef_ls$mspss
+c(panas_instructions,
+  panas_anchor,
+  PANAS_df$Statement[panas_items[45:48]]) ->
+  ef_ls$panas
+c(promis3a_instructions,
+  promis3a_anchor,
+  PROMIS3a_df$Statement[1]) ->
+  ef_ls$prom3
+c(promis3a_instructions,
+  promis3a_anchor,
+  PROMIS8a_df$Statement[1]) ->
+  ef_ls$prom8
+c(psq8_instructions,
+  psq8_anchor,
+  PSQ8_df$Statement[psq8_items[23:24]]) ->
+  ef_ls$psq8
+c(ptgi_instructions,
+  ptgi_anchor,
+  PTGI_df$Statement[ptgi_items[56:60]]) ->
+  ef_ls$ptgi
+c(roe_instructions,
+  roe_anchor,
+  ROE_df$Statement[roe_items[23:24]]) ->
+  ef_ls$roe
+
+```
+```{r createSurveys}
+#| include: FALSE
+
+write(x = unlist(
+  ma_ls[sample(
+    c("cope", "cset", "lseq", "mspss", "panas", 
+      "prom3", "prom8", "psq8", "ptgi", "roe"),
+    replace = FALSE)]), 
+  file = here("Surveys/Morning A.txt"), 
+  sep = '/n')
+write(x = unlist(
+  mb_ls[sample(
+    c("cope", "cset", "lseq", "mspss", "panas", 
+      "prom3", "prom8", "psq8", "ptgi", "roe"),
+    replace = FALSE)]), 
+  file = here("Surveys/Morning B.txt"), 
+  sep = '/n')
+write(x = unlist(
+  mc_ls[sample(
+  c("cope", "cset", "lseq", "mspss", "panas", 
+    "prom3", "prom8", "psq8", "ptgi", "roe"),
+  replace = FALSE)]), 
+  file = here("Surveys/Morning C.txt"), sep = '/n')
+write(x = unlist(
+  md_ls[sample(
+  c("cope", "cset", "lseq", "mspss", "panas", 
+    "prom3", "prom8", "psq8", "ptgi", "roe"),
+  replace = FALSE)]), 
+  file = here("Surveys/Morning D.txt"), sep = '/n')
+write(x = unlist(
+  me_ls[sample(
+  c("cope", "cset", "lseq", "mspss", "panas", 
+    "prom3", "prom8", "psq8", "ptgi", "roe"),
+  replace = FALSE)]), 
+  file = here("Surveys/Morning E.txt"), sep = '/n')
+write(x = unlist(
+  mf_ls[sample(
+  c("cope", "cset", "lseq", "mspss", "panas", 
+    "prom3", "prom8", "psq8", "ptgi", "roe"),
+  replace = FALSE)]), 
+  file = here("Surveys/Morning F.txt"), sep = '/n')
+
+write(x = unlist(
+  ea_ls[sample(
+  c("cope", "cset", "mspss", "panas", 
+    "prom3", "prom8", "psq8", "ptgi", "roe"),
+  replace = FALSE)]), 
+  file = here("Surveys/Evening A.txt"), sep = '/n')
+write(x = unlist(
+  eb_ls[sample(
+  c("cope", "cset", "mspss", "panas", 
+    "prom3", "prom8", "psq8", "ptgi", "roe"),
+  replace = FALSE)]), 
+  file = here("Surveys/Evening B.txt"), sep = '/n')
+write(x = unlist(
+  ec_ls[sample(
+  c("cope", "cset", "mspss", "panas", 
+    "prom3", "prom8", "psq8", "ptgi", "roe"),
+  replace = FALSE)]), 
+  file = here("Surveys/Evening C.txt"), sep = '/n')
+write(x = unlist(
+  ed_ls[sample(
+  c("cope", "cset", "mspss", "panas", 
+    "prom3", "prom8", "psq8", "ptgi", "roe"),
+  replace = FALSE)]), 
+  file = here("Surveys/Evening D.txt"), sep = '/n')
+write(x = unlist(
+  ee_ls[sample(
+  c("cope", "cset", "mspss", "panas", 
+    "prom3", "prom8", "psq8", "ptgi", "roe"),
+  replace = FALSE)]), 
+  file = here("Surveys/Evening E.txt"), sep = '/n')
+write(x = unlist(
+  ef_ls[sample(
+  c("cope", "cset", "mspss", "panas", 
+    "prom3", "prom8", "psq8", "ptgi", "roe"),
+  replace = FALSE)]), 
+  file = here("Surveys/Evening F.txt"), sep = '/n')
+
+```

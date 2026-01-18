@@ -1,0 +1,966 @@
+ ---
+title: "Data Merge"
+output: word_document
+date: "2025-05-27"
+---
+
+To do:
+
+
+```{r setup}
+#| include: FALSE
+#| 
+knitr::opts_chunk$set(echo = TRUE)
+
+for(packageName in c("here",
+                     "magrittr",
+#                     "rjson",
+                     "tidyjson",
+                     "tidyverse")) {
+  if(!is.element(packageName,               # If package is NOT installed...
+                 installed.packages()[,1])) {
+    install.packages(packageName)           #  ...then install it.
+  }
+  library(packageName,                      # Add package to environment
+          character.only=TRUE,
+          quietly=TRUE,
+          verbose=FALSE)
+}
+
+i_am("Scripts/Data Merge.Rmd") # To help find all the files.
+
+options(show.signif.stars = FALSE)          # Don't stargaze
+options(digits = 3)                         # Round to 3 digits by default
+
+```
+
+```{r functions}
+# # Setup for testing
+# ema_df %>%
+#   select(starts_with("COPE_Approach_1")) ->
+#   df
+# # End testing setup
+
+combine_cols <- function(df,                # Data frame
+                         item_name) {       # Item Name
+
+  require(tidyverse)
+  # Note: For some scales, 0 is a legitimate value, while for others it is
+  #  not. Hence, the sort of crazy stuff going on here. This is all to avoid
+  #  the problem where the sum of 6 NA should be NA, not 0.
+  # This probably only works for the data in its current format, because
+  #  there will only be 0 or 1 non-NA values.
+  
+  # The select seems to stop with the first period, so the next is not
+  #  needed.
+  # paste(item_name, ".", sep = "") ->
+  #   item_name
+  
+  df %>%
+    select(starts_with(paste0(item_name,"."))) ->
+    df1
+
+  NA -> df$x
+  ncol(df1) ->
+    numcol
+  
+  for(rownum in 1:nrow(df)) {
+    if(sum(is.na(df1[rownum,])) != numcol) {
+      sum(df1[rownum,],
+          na.rm = TRUE) ->
+        df$x[rownum]
+    }
+  }  
+  
+  str_split(colnames(df1)[1],                # Rename the x column
+            "[.]")[[1]][1] ->
+    colnames(df)[which(colnames(df) == "x")]
+
+  return(df)
+}
+
+# make_key <- function(rsp, 
+#                      posix) {
+#   
+#   vector(mode = "character",
+#          length = length(posix_ls)) ->
+#     key_vec
+#   for(index in 1:length(posix)) {
+#     unlist(str_split(posix, "-| |:")) ->
+#       posix
+# 
+#     paste0(rsp, x[1], x[2], x[3], x[4])
+#   }
+#   
+#   lapply(posix,
+#          function(x) {
+#            paste0(rsp, x[1], x[2], x[3], x[4])
+#          }) ->
+#     key_ls
+#   
+#   
+#   
+#   require(lubridate)
+#   str_replace_all(posix,
+#                   " UTC",
+#                   "") ->
+#     posix
+#   return(
+#     paste0(rsp,
+#            lubridate::year(posix),
+#            lubridate::month(posix),
+#            lubridate::day(posix),
+#            lubridate::hour(posix)))
+# }
+# 
+
+combine_prcs <- function(df) {
+  require(tidyverse)
+  df %>%
+    select(starts_with("PRCS_")) ->
+    df
+  vector(mode = "character",
+         length = nrow(df)) ->
+    prcs
+  for(index in 1:nrow(df)) {
+    if(sum(is.na(df[index,])) != ncol(df)) {
+      df[index, which(is.na(df[index,]) == FALSE)] ->
+        prcs[index]
+    }
+  }
+  as.numeric(
+    unname(
+      unlist(prcs))) ->
+    prcs
+  return(prcs)
+}
+  
+combine_rec <- function(df,
+                        n) {
+  require(tidyverse)
+  df %>%
+    select(starts_with("REC_")) %>%
+    select(contains(paste0("_",
+                           n,
+                           "_"))) ->
+    df
+  vector(mode = "character",
+         length = nrow(df)) ->
+    rec
+  for(index in 1:nrow(df)) {
+    if(sum(is.na(df[index,])) != ncol(df)) {
+      df[index, which(is.na(df[index,]) == FALSE)] ->
+        rec[index]
+    }
+  }
+  unname(
+    unlist(rec)) ->
+    rec
+
+  return(rec)
+}
+
+select_date <- function(df) {
+  require(tidyverse)
+  
+  df %>% 
+    select(starts_with("date")) ->
+    df1
+  
+  apply(df1,
+        1,
+        function(x) 
+          min(which(is.na(x) == FALSE))) ->
+    dd
+  
+  rep(NA, nrow(df1)) -> date_vec
+  
+  for(index in 1:nrow(df1)) {
+    unlist(df1[index, dd[index]]) -> date_vec[index]
+  }
+
+  as.Date(date_vec) ->
+    date_vec
+
+  return(date_vec)
+}
+
+select_time <- function(df) {
+  require(tidyverse)
+
+  df %>% select(starts_with("ampm")) ->
+    df1
+
+  apply(df1,
+        1,
+        function(x)
+          min(which(is.na(x) == FALSE))) ->
+    dd
+
+  rep(NA, nrow(df1)) -> time_vec
+
+  for(index in 1:nrow(df1)) {
+    unlist(df1[index, dd[index]]) -> time_vec[index]
+  }
+
+  return(time_vec)
+}
+
+```
+
+# Read Data
+
+## EMA Data
+
+Important notes:
+
+1. Each file has a varying number (and names) of columns, so this is hard coded. 2. Note that the rsp_id limits must be checked as well. Currently the range of valid rsp_id is [64400, 65000] with everything outside that range assumed to be testing entries; the testing entries are removed.
+
+3. All 12 files are stored in a single list, ema_ls. They are NOT joined in any way. The list is stored in here("ema/EMA List.RData").
+
+Still to do: 
+
+```{r read_EMA}
+#| echo: FALSE
+#| warning: FALSE
+#| message: FALSE
+#| 
+
+list() -> ema_ls
+
+dir(path = here("ema"),                     # Work in this directory
+    pattern = ".csv") -> file_names         # Get the names of all .CSV files
+
+for(index in 1:(length(file_names)/2)) {
+  2 * index  -> index2                      # Morning and evening EMA have
+  index2 - 1 -> index1                      #  different number of columns
+  
+  read_csv(file = here(paste0("ema/",
+                              file_names[index1])),
+           col_select = 1:42) ->
+    ema_ls[[index1]]
+  NULL -> attr(ema_ls[[index1]], "spec")
+  paste0(ema_ls[[index1]]$rsp_id, 
+         ema_ls[[index1]]$scheduled_start_local) ->
+    ema_ls[[index1]]$key
+  as_date(ema_ls[[index1]]$scheduled_start_local) ->
+    ema_ls[[index1]]$date
+  ifelse(
+    str_split_i(ema_ls[[index1]]$scheduled_start_local,
+                pattern = " |:",
+                i = 2) < 12, "am", "pm") ->
+    ema_ls[[index1]]$ampm
+  
+  
+  read_csv(file = here(paste0("ema/",
+                              file_names[index2])),
+           col_select = 1:46) ->
+    ema_ls[[index2]]
+  NULL -> attr(ema_ls[[index2]], "spec")
+  paste0(ema_ls[[index2]]$rsp_id, 
+         ema_ls[[index2]]$scheduled_start_local) ->
+    ema_ls[[index2]]$key
+  as_date(ema_ls[[index2]]$scheduled_start_local) ->
+    ema_ls[[index2]]$date
+  ifelse(
+    str_split_i(ema_ls[[index2]]$scheduled_start_local,
+                pattern = " |:",
+                i = 2) < 12, "am", "pm") ->
+    ema_ls[[index2]]$ampm
+}
+
+lapply(                                     # Remove the testing rsp_id
+  ema_ls,    
+  function(x) x %>% 
+    filter(rsp_id > 64400) %>% 
+    filter(rsp_id < 65000)) ->
+  ema_ls
+
+
+unique(                                       # This should be redundant, but
+  c(ema_ls[[1]]$mbl_cod, ema_ls[[2]]$mbl_cod, # check it anyway! ema_ls[[1]]
+    ema_ls[[3]]$mbl_cod, ema_ls[[4]]$mbl_cod, # should contain them all.
+    ema_ls[[5]]$mbl_cod, ema_ls[[6]]$mbl_cod,
+    ema_ls[[7]]$mbl_cod, ema_ls[[8]]$mbl_cod,
+    ema_ls[[9]]$mbl_cod, ema_ls[[10]]$mbl_cod, 
+    ema_ls[[11]]$mbl_cod, ema_ls[[12]]$mbl_cod)) ->
+  valid_mobile_codes
+
+save(ema_ls,
+     file = here("ema/EMA List.RData"))
+```
+
+
+```{r question_name_checks}
+#| eval: FALSE
+
+# Let's make certain all the questions are properly labelled.
+# Look through these and compare to the survey creation lists.
+
+c(colnames(ema_ls[[1]]),
+  colnames(ema_ls[[2]]),
+  colnames(ema_ls[[3]]),
+  colnames(ema_ls[[4]]),
+  colnames(ema_ls[[5]]),
+  colnames(ema_ls[[6]]),
+  colnames(ema_ls[[7]]),
+  colnames(ema_ls[[8]]),
+  colnames(ema_ls[[9]]),
+  colnames(ema_ls[[10]]),
+  colnames(ema_ls[[11]]),
+  colnames(ema_ls[[12]])) ->
+  ema_names
+table(ema_names)
+```
+
+### Data Merging
+
+Now, to merge the EMA data.
+```{r}
+#| eval: FALSE
+# Are the keys unique?
+
+unique(ema_ls[[1]]$key) ->
+  keys
+for(index in 2:12) {
+  c(keys, unique(ema_ls[[index]]$key)) ->
+    keys
+}
+
+length(keys) == length(unique(keys))
+# If the preceding is TRUE, then all keys are unique
+
+```
+
+Step 1: Join all the data frames, using a complex key (rsp_id + date + hour)
+```{r}
+full_join(ema_ls[[1]],
+          ema_ls[[2]],
+          by = join_by(key)) ->
+  ema_df
+
+3 -> index
+index + 1 -> index
+
+for(index in 3:12) {
+  full_join(ema_df,
+            ema_ls[[index]],
+            by = join_by(key)) ->
+    ema_df
+}
+
+ema_df[ , order(names(ema_df))] ->
+  ema_df
+
+```
+
+Step 2: Combine items where appropriate. This can be done by rowSums(., na.rm = TRUE)
+
+There's an issue with combine_cols(): MSPSS_1 matches MSPSS_1, MSPSS_10, etc.
+Fix that one! (Issue on 1 July 2025)
+
+```{r}
+# There's a better way to do this, I'm sure. However, this is quick and doesn't
+#  require much thinking about enquote, assign, etc, so it will save me time.
+combine_cols(ema_df, "mbl_cod") -> ema_df
+combine_cols(ema_df, "rsp_id") -> ema_df
+combine_cols(ema_df, "instance_id") -> ema_df
+select_date(ema_df) -> ema_df$date
+select_time(ema_df) -> ema_df$ampm
+combine_cols(ema_df, "timezone_offset") -> ema_df
+
+combine_cols(ema_df, "COPE_1") -> ema_df
+combine_cols(ema_df, "COPE_2") -> ema_df
+combine_cols(ema_df, "COPE_3") -> ema_df
+combine_cols(ema_df, "COPE_4") -> ema_df
+combine_cols(ema_df, "COPE_5") -> ema_df
+combine_cols(ema_df, "COPE_6") -> ema_df
+
+combine_cols(ema_df, "CSET_1") -> ema_df
+combine_cols(ema_df, "CSET_2") -> ema_df
+combine_cols(ema_df, "CSET_3") -> ema_df
+combine_cols(ema_df, "CSET_4") -> ema_df
+combine_cols(ema_df, "CSET_5") -> ema_df
+combine_cols(ema_df, "CSET_6") -> ema_df
+combine_cols(ema_df, "CSET_7") -> ema_df
+combine_cols(ema_df, "CSET_8") -> ema_df
+combine_cols(ema_df, "CSET_9") -> ema_df
+
+combine_cols(ema_df, "LSEQ_Restlessness") -> ema_df
+combine_cols(ema_df, "LSEQ_Wakefulness") -> ema_df
+
+combine_cols(ema_df, "MSPSS_1") -> ema_df
+combine_cols(ema_df, "MSPSS_2") -> ema_df
+combine_cols(ema_df, "MSPSS_3") -> ema_df
+combine_cols(ema_df, "MSPSS_4") -> ema_df
+combine_cols(ema_df, "MSPSS_5") -> ema_df
+combine_cols(ema_df, "MSPSS_6") -> ema_df
+combine_cols(ema_df, "MSPSS_7") -> ema_df
+combine_cols(ema_df, "MSPSS_8") -> ema_df
+combine_cols(ema_df, "MSPSS_9") -> ema_df
+combine_cols(ema_df, "MSPSS_10") -> ema_df
+combine_cols(ema_df, "MSPSS_11") -> ema_df
+combine_cols(ema_df, "MSPSS_12") -> ema_df
+
+combine_cols(ema_df, "PANASSF_1") -> ema_df
+combine_cols(ema_df, "PANASSF_2") -> ema_df
+combine_cols(ema_df, "PANASSF_3") -> ema_df
+combine_cols(ema_df, "PANASSF_4") -> ema_df
+combine_cols(ema_df, "PANASSF_5") -> ema_df
+combine_cols(ema_df, "PANASSF_6") -> ema_df
+combine_cols(ema_df, "PANASSF_7") -> ema_df
+combine_cols(ema_df, "PANASSF_8") -> ema_df
+combine_cols(ema_df, "PANASSF_9") -> ema_df
+combine_cols(ema_df, "PANASSF_10") -> ema_df
+combine_cols(ema_df, "PANASSF_11") -> ema_df
+combine_cols(ema_df, "PANASSF_12") -> ema_df
+combine_cols(ema_df, "PANASSF_13") -> ema_df
+combine_cols(ema_df, "PANASSF_14") -> ema_df
+combine_cols(ema_df, "PANASSF_15") -> ema_df
+combine_cols(ema_df, "PANASSF_16") -> ema_df
+combine_cols(ema_df, "PANASSF_17") -> ema_df
+combine_cols(ema_df, "PANASSF_18") -> ema_df
+combine_cols(ema_df, "PANASSF_19") -> ema_df
+combine_cols(ema_df, "PANASSF_20") -> ema_df
+
+combine_cols(ema_df, "PROMIS_3A_1") -> ema_df
+combine_cols(ema_df, "PROMIS_8A_1") -> ema_df
+
+combine_cols(ema_df, "PSQ_1") -> ema_df
+combine_cols(ema_df, "PSQ_2") -> ema_df
+combine_cols(ema_df, "PSQ_3") -> ema_df
+combine_cols(ema_df, "PSQ_4") -> ema_df
+combine_cols(ema_df, "PSQ_5") -> ema_df
+combine_cols(ema_df, "PSQ_6") -> ema_df
+combine_cols(ema_df, "PSQ_7") -> ema_df
+combine_cols(ema_df, "PSQ_8") -> ema_df
+
+combine_cols(ema_df, "PTGISF_1") -> ema_df
+combine_cols(ema_df, "PTGISF_2") -> ema_df
+combine_cols(ema_df, "PTGISF_3") -> ema_df
+combine_cols(ema_df, "PTGISF_4") -> ema_df
+combine_cols(ema_df, "PTGISF_5") -> ema_df
+combine_cols(ema_df, "PTGISF_6") -> ema_df
+combine_cols(ema_df, "PTGISF_7") -> ema_df
+combine_cols(ema_df, "PTGISF_8") -> ema_df
+combine_cols(ema_df, "PTGISF_9") -> ema_df
+combine_cols(ema_df, "PTGISF_10") -> ema_df
+
+combine_cols(ema_df, "ROE_1") -> ema_df
+combine_cols(ema_df, "ROE_2") -> ema_df
+combine_cols(ema_df, "ROE_3") -> ema_df
+combine_cols(ema_df, "ROE_4") -> ema_df
+combine_cols(ema_df, "ROE_5") -> ema_df
+combine_cols(ema_df, "ROE_6") -> ema_df
+
+ema_df %>%                                  # Remove the detritus created by
+  select(!ends_with("x")) %>%               #  the joins.
+  select(!ends_with("y")) ->
+  ema_df
+
+```
+
+Fix particular missingness:
+
+- For many EMA items, a value of "-9" indicates missingness.
+- For LSEQ items, a value of "-1" indicates missingness. (Not yet fixed; 1 July 2025. Waiting on confirmation from Alex.)
+```{r}
+NA ->                                       # Skipped 1 or more EMA: COPE, CSET,
+  ema_df[ema_df == -9]                      #  MSPSS, PSQ, PANAS, PTGI, ROE
+NA ->                                       # Skipped LSET question(s)
+  ema_df[ema_df == -1]
+  
+```
+
+```{r}
+
+# These are done here to avoid the NA problem in the previous chunk.
+combine_rec(ema_df,1) -> ema_df$REC1
+combine_rec(ema_df,2) -> ema_df$REC2
+combine_prcs(ema_df) -> ema_df$PRCS
+
+ema_df %>%                                  # Remove the detritus created by
+  select(!starts_with("PRCS_")) %>%
+  select(!starts_with("REC_")) ->
+  ema_df
+
+```
+
+Check the data integrity: Are there any data outside the scale range?
+
+```{r check_ema_values}
+
+# These should all return integer(0) if the data meet the integrity check.
+
+apply(
+  ema_df %>%
+    select(starts_with("COPE")),
+  2,
+  function(x) which(x > 3 | x < 0))         # COPE scale range: [0,3]
+
+apply(
+  ema_df %>%
+    select(starts_with("CSET")),
+  2,
+  function(x) which(x > 7 | x < 1))         # CSET scale range: [1,7]
+
+apply(
+  ema_df %>%
+    select(starts_with("LSEQ")),
+  2,
+  function(x) which(x > 100 | x < 0))
+
+apply(
+  ema_df %>%
+    select(starts_with("MSPSS")),
+  2,
+  function(x) which(x > 7 | x < 1))
+
+apply(
+  ema_df %>%
+    select(starts_with("PANASSF")),
+  2,
+  function(x) which(x > 5 | x < 1))
+
+apply(
+  ema_df %>%
+    select(starts_with("PROMIS")),
+  2,
+  function(x) which(x > 5 | x < 1))
+
+apply(
+  ema_df %>%
+    select(starts_with("PSQ")),
+  2,
+  function(x) which(x > 4 | x < 1))
+
+apply(
+  ema_df %>%
+    select(starts_with("PTGI")),
+  2,
+  function(x) which(x > 5 | x < 0))
+
+apply(
+  ema_df %>%
+    select(starts_with("ROE")),
+  2,
+  function(x) which(x > 5 | x < 1))
+
+```
+
+
+Step 3: Put the subscale designation into the column names. (E.g. A column name of "PSQ_1" becomes "PSQ_Demands_1" and so on.)
+```{r}
+
+colnames(ema_df) ->
+  ema_names
+
+str_replace_all(ema_names, "COPE_1" ,"COPE_Active_1") ->
+  ema_names
+str_replace_all(ema_names, "COPE_2" ,"COPE_Accept_2") ->
+  ema_names
+str_replace_all(ema_names, "COPE_3" ,"COPE_Support_3") ->
+  ema_names
+str_replace_all(ema_names, "COPE_4" ,"COPE_Venting_4") ->
+  ema_names
+str_replace_all(ema_names, "COPE_5" ,"COPE_Disengage_5") ->
+  ema_names
+str_replace_all(ema_names, "COPE_6" ,"COPE_SelfBlame_6") ->
+  ema_names
+str_replace_all(ema_names, "PSQ_1" ,"PSQ_Demands_1") ->
+  ema_names
+str_replace_all(ema_names, "PSQ_2" ,"PSQ_NoJoy_2") ->
+  ema_names
+str_replace_all(ema_names, "PSQ_3" ,"PSQ_Tension_3") ->
+  ema_names
+str_replace_all(ema_names, "PSQ_4" ,"PSQ_Worries_4") ->
+  ema_names
+str_replace_all(ema_names, "PSQ_5" ,"PSQ_Worries_5") ->
+  ema_names
+str_replace_all(ema_names, "PSQ_6" ,"PSQ_NoJoy_6") ->
+  ema_names
+str_replace_all(ema_names, "PSQ_7" ,"PSQ_Tension_7") ->
+  ema_names
+str_replace_all(ema_names, "PSQ_8" ,"PSQ_Demands_8") ->
+  ema_names
+str_replace_all(ema_names, "MSPSS_1" ,"MSPSS_SigOth_1") ->
+  ema_names
+str_replace_all(ema_names, "MSPSS_2" ,"MSPSS_SigOth_2") ->
+  ema_names
+str_replace_all(ema_names, "MSPSS_3" ,"MSPSS_Family_3") ->
+  ema_names
+str_replace_all(ema_names, "MSPSS_4" ,"MSPSS_Family_4") ->
+  ema_names
+str_replace_all(ema_names, "MSPSS_5" ,"MSPSS_SigOth_5") ->
+  ema_names
+str_replace_all(ema_names, "MSPSS_6" ,"MSPSS_Friends_6") ->
+  ema_names
+str_replace_all(ema_names, "MSPSS_7" ,"MSPSS_Friends_7") ->
+  ema_names
+str_replace_all(ema_names, "MSPSS_8" ,"MSPSS_Family_8") ->
+  ema_names
+str_replace_all(ema_names, "MSPSS_9" ,"MSPSS_Friends_9") ->
+  ema_names
+str_replace_all(ema_names, "MSPSS_10" ,"MSPSS_SigOth_10") ->
+  ema_names
+str_replace_all(ema_names, "MSPSS_11" ,"MSPSS_Family_11") ->
+  ema_names
+str_replace_all(ema_names, "MSPSS_12" ,"MSPSS_Friends_12") ->
+  ema_names
+str_replace_all(ema_names, "PANASSF_1" ,"PANASSF_Positive_1") ->
+  ema_names
+str_replace_all(ema_names, "PANASSF_2" ,"PANASSF_Negative_2") ->
+  ema_names
+str_replace_all(ema_names, "PANASSF_3" ,"PANASSF_Positive_3") ->
+  ema_names
+str_replace_all(ema_names, "PANASSF_4" ,"PANASSF_Negative_4") ->
+  ema_names
+str_replace_all(ema_names, "PANASSF_5" ,"PANASSF_Positive_5") ->
+  ema_names
+str_replace_all(ema_names, "PANASSF_6" ,"PANASSF_Negative_6") ->
+  ema_names
+str_replace_all(ema_names, "PANASSF_7" ,"PANASSF_Negative_7") ->
+  ema_names
+str_replace_all(ema_names, "PANASSF_8" ,"PANASSF_Negative_8") ->
+  ema_names
+str_replace_all(ema_names, "PANASSF_9" ,"PANASSF_Positive_9") ->
+  ema_names
+str_replace_all(ema_names, "PANASSF_10" ,"PANASSF_Positive_10") ->
+  ema_names
+str_replace_all(ema_names, "PANASSF_11" ,"PANASSF_Negative_11") ->
+  ema_names
+str_replace_all(ema_names, "PANASSF_12" ,"PANASSF_Positive_12") ->
+  ema_names
+str_replace_all(ema_names, "PANASSF_13" ,"PANASSF_Negative_13") ->
+  ema_names
+str_replace_all(ema_names, "PANASSF_14" ,"PANASSF_Positive_14") ->
+  ema_names
+str_replace_all(ema_names, "PANASSF_15" ,"PANASSF_Negative_15") ->
+  ema_names
+str_replace_all(ema_names, "PANASSF_16" ,"PANASSF_Positive_16") ->
+  ema_names
+str_replace_all(ema_names, "PANASSF_17" ,"PANASSF_Positive_17") ->
+  ema_names
+str_replace_all(ema_names, "PANASSF_18" ,"PANASSF_Negative_18") ->
+  ema_names
+str_replace_all(ema_names, "PANASSF_19" ,"PANASSF_Positive_19") ->
+  ema_names
+str_replace_all(ema_names, "PANASSF_20" ,"PANASSF_Negative_20") ->
+  ema_names
+str_replace_all(ema_names, "PTGISF_1" ,"PTGISF_Life_1") ->
+  ema_names
+str_replace_all(ema_names, "PTGISF_2" ,"PTGISF_Life_2") ->
+  ema_names
+str_replace_all(ema_names, "PTGISF_3" ,"PTGISF_Possible_3") ->
+  ema_names
+str_replace_all(ema_names, "PTGISF_4" ,"PTGISF_Strength_4") ->
+  ema_names
+str_replace_all(ema_names, "PTGISF_5" ,"PTGISF_Spirit_5") ->
+  ema_names
+str_replace_all(ema_names, "PTGISF_6" ,"PTGISF_Relate_6") ->
+  ema_names
+str_replace_all(ema_names, "PTGISF_7" ,"PTGISF_Possible_7") ->
+  ema_names
+str_replace_all(ema_names, "PTGISF_8" ,"PTGISF_Relate_8") ->
+  ema_names
+str_replace_all(ema_names, "PTGISF_9" ,"PTGISF_Relate_9") ->
+  ema_names
+str_replace_all(ema_names, "PTGISF_10" ,"PTGISF_Strength_10") ->
+  ema_names
+str_replace_all(ema_names, "PTGISF_11" ,"PTGISF_Possible_11") ->
+  ema_names
+str_replace_all(ema_names, "PTGISF_12" ,"PTGISF_Strength_12") ->
+  ema_names
+str_replace_all(ema_names, "PTGISF_13" ,"PTGISF_Life_13") ->
+  ema_names
+str_replace_all(ema_names, "PTGISF_14" ,"PTGISF_Possible_14") ->
+  ema_names
+str_replace_all(ema_names, "PTGISF_15" ,"PTGISF_Relate_15") ->
+  ema_names
+str_replace_all(ema_names, "PTGISF_16" ,"PTGISF_Relate_16") ->
+  ema_names
+str_replace_all(ema_names, "PTGISF_17" ,"PTGISF_Possible_17") ->
+  ema_names
+str_replace_all(ema_names, "PTGISF_18" ,"PTGISF_Spirit_18") ->
+  ema_names
+str_replace_all(ema_names, "PTGISF_19" ,"PTGISF_Strength_19") ->
+  ema_names
+str_replace_all(ema_names, "PTGISF_20" ,"PTGISF_Relate_20") ->
+  ema_names
+str_replace_all(ema_names, "PTGISF_21" ,"PTGISF_Relate_21") ->
+  ema_names
+
+ema_names ->
+  colnames(ema_df)
+
+```
+
+Step 4: Create instance means for each scale. Can't use totals because there are different number of items for some subscales am and pm.
+
+LSET and PROMIS are single items, so no averaging is needed.
+```{r}
+
+ema_df %>%
+  mutate(PANAS_PA = rowMeans(across(contains("_Positive_")),
+                                    na.rm = TRUE)) %>%
+  mutate(PANAS_NA = rowMeans(across(contains("_Negative_")),
+                             na.rm = TRUE)) %>%
+  mutate(CSET = rowMeans(across(contains("CSET")),
+                         na.rm = TRUE)) %>%
+  mutate(PTGI_Relate = rowMeans(across(contains("_Relate_")),
+                                na.rm = TRUE)) %>%
+  mutate(PTGI_Life = rowMeans(across(contains("_Life_")),
+                              na.rm = TRUE)) %>%
+  mutate(PTGI_Strength = rowMeans(across(contains("_Strength_")),
+                                  na.rm = TRUE)) %>%
+  mutate(PSQ_Demands = rowMeans(across(contains("_Demands_")),
+                                na.rm = TRUE)) %>%
+  mutate(PSQ_Worries = rowMeans(across(contains("_Worries_")),
+                                na.rm = TRUE)) %>%
+  mutate(PSQ_Tension = rowMeans(across(contains("_Tension_")),
+                                na.rm = TRUE)) %>%
+  mutate(PSQ_NoJoy = rowMeans(across(contains("_NoJoy_")),
+                              na.rm = TRUE)) %>%
+  mutate(ROE = rowMeans(across(starts_with("ROE")),
+                        na.rm = TRUE)) %>%
+  mutate(MSPSS_SigOth = rowMeans(across(contains("_SigOth_")),
+                                 na.rm = TRUE)) %>%
+  mutate(MSPSS_Family = rowMeans(across(contains("_Family_")),
+                                 na.rm = TRUE)) %>%
+  mutate(MSPSS_Friends = rowMeans(across(contains("_Friends_")),
+                                  na.rm = TRUE)) ->
+  # mutate(COPE_Approach = rowMeans(across(contains("_Approach_")),
+  #                                 na.rm = TRUE)) %>%
+  # mutate(COPE_Avoid = rowMeans(across(contains("_Avoid_")),
+  #                              na.rm = TRUE)) ->
+  ema_df
+
+save(ema_df,
+     file = here("EMA df.RData"))
+
+```
+
+Step 5: Make long? Do something?
+```{r}
+
+```
+
+## Audio
+BTW, the audio files have names something like this:
+aud_9891105_1732744605.m4a
+The "1732744605" is the instance ID in EMA data. Each can be found in the corresponding mbl_cod folder under the audio folder.
+
+There are 2 formats for the audio data; M4A and 3GG. These appear to be from IOS and Android phones, respectively. Will that matter?
+
+It is impractical to put the audio data into a list; that list would be huge. Hence, all analyses will be done reading in the data using the ID.
+
+We'll ignore the extra (almost empty) folders; if the folder isn't in valid_mobile_codes, then it gets ignored.
+
+For some potential analyses, see: Schultebraucks, K., Yadav, V., Shalev, A. Y., Bonanno, G. A., & Galatzer-Levy, I. R. (2022). Deep learning-based classification of posttraumatic stress disorder and depression following trauma utilizing visual and auditory markers of arousal and mood. Psychological Medicine, 52(5), 957–967. https://doi.org/10.1017/S0033291720002718
+
+Chip also indicates that these would be helpful audio analyses: ????
+ 
+```{r audio}
+#| echo: FALSE
+#| eval: FALSE
+#| 
+dir(here("audio")) ->
+  audio_dir
+audio_dir[which(!(dir(here("audio")) %in% keep_codes))] ->
+  del_dir
+paste0("audio/",
+       del_dir) ->
+  del_sub_dir
+
+unlink(x = del_sub_dir[1],
+       recursive = TRUE)
+
+```
+
+## Fitbit Biomarkers
+
+```{r hrvExample}
+#| include: FALSE
+#| eval: FALSE
+tidyjson::read_json(
+  path = here("../IRIS Data Backup/fitbit_data/2025-05-03.json"),
+  format = "json") -> 
+  test1
+
+# The next gives a list of 76 entries (the last 380 (=76 x 5) minutes of
+#  2025-05-03) for the IRIS1002 watch.
+#
+# JSON is a strange format. Just roll with the first part of this list
+#  access:
+test1[[2]][[1]]$IRIS1002$hrv[[1]]$hrv
+
+# The entries look like this (for the 75th interval of the sequence, and with
+#  explanations interspersed).
+
+# [[1]]$minutes[[75]]
+# [[1]]$minutes[[75]]$minute
+# [1] "2025-05-03T23:50:00.000"
+# - timestamp: the start of the 5 minutes interval for which the following 
+# values were computed
+
+
+# [[1]]$minutes[[75]]$value
+# [[1]]$minutes[[75]]$value$rmssd
+# [1] 20
+# - rmssd: "root mean square of successive differences" - the square root of 
+# the mean of the squares of the successive differences between adjacent
+# beat-to-beat intervals
+
+# [[1]]$minutes[[75]]$value$coverage        #
+# [1] 0.911
+# - coverage: the number of data points in the interval, multiplied by the 
+# mean beat-to-beat of the interval in seconds and divided by the number of
+# seconds in the interval (300 seconds)
+
+# [[1]]$minutes[[75]]$value$hf
+# [1] 112
+# - high_frequency: measures short term variations in heart rate and captures
+# parasympathetic activity
+
+# [[1]]$minutes[[75]]$value$lf
+# [1] 716
+# - low_frequency: measures long term variations in heart rate and reflects
+# activity from both the sympathetic and parasympathetic branches
+
+# test1[[2]][[1]]$IRIS1002$hrv[[2]]$hrv gives the previous day (2025-05-02);
+#  there are 92 entries there, of the same format as above. And so on.
+
+
+
+
+test1[[2]][[1]]$IRIS1002$heart[[1]] -> dum1
+
+
+test1[[2]][[1]]$IRIS1002$heart[[1]]$`activities-heart-intraday` -> dum1
+
+
+# Here are all the heartrate data.
+length(test1[[2]][[1]]$IRIS1002$heart[[1]]$`activities-heart-intraday`$dataset)
+
+# > test1[[2]][[1]]$IRIS1002$heart[[2]]$requested_date
+# [1] "2025-05-02"
+# > test1[[2]][[1]]$IRIS1002$heart[[1]]$requested_date
+# [1] "2025-05-03"
+# > test1[[2]][[1]]$IRIS1002$heart[[3]]$requested_date
+# [1] "2025-05-01"
+# > test1[[2]][[1]]$IRIS1002$heart[[4]]$requested_date
+# [1] "2025-04-30"
+# > test1[[2]][[1]]$IRIS1002$heart[[5]]$requested_date
+# [1] "2025-04-29"
+# > test1[[2]][[1]]$IRIS1002$heart[[6]]$requested_date
+# [1] "2025-04-28"
+# > test1[[2]][[1]]$IRIS1002$heart[[7]]$requested_date
+# [1] "2025-04-27"
+# > test1[[2]][[1]]$IRIS1002$heart[[8]]$requested_date
+
+```
+
+Pull of IRIS2002$hrv for all of the data that have them.
+
+```{r IRIS1002_test}
+sort(
+  dir(path = here("fitbit_data"),
+      pattern = ".json")) ->
+  fitbit_files
+
+list() ->
+  hrv_ls ->
+  data_ls
+
+0 -> data_index
+for(index in 1:length(fitbit_files)) {
+  tidyjson::read_json(path = paste0(here("fitbit_data",fitbit_files[index])),                         format = "json")[[2]][[1]] -> 
+    data1
+  if("IRIS1002" %in% names(data1)) {
+    data1$IRIS1002$hrv ->         # 
+      hrv_ls[[index]]
+#print(index)
+    if(length(hrv_ls[[index]]) > 0) {       #
+#print(length(hrv_ls[[index]]))
+      for(index2 in 1:length(hrv_ls[[index]])) {
+        if(length(hrv_ls[[index]][[index2]]) > 0) {
+#print(names(hrv_ls[[index]][[index2]]))
+          if("hrv" %in% names(hrv_ls[[index]][[index2]])) {
+            unname(unlist(hrv_ls[[index]][[index2]]$hrv)) ->
+              hrv1
+            if(is.null(hrv1) == FALSE) {
+              #
+              # Need to check data formats. If the first element can be cast
+              #  to a date, drop it.
+              # Because there may be error, need a try-catch
+              #
+              tryCatch(
+                {
+                  suppressWarnings(
+                    is.Date(as.Date.character(hrv1[1])))
+                },
+                error = function(cond) {
+                  FALSE
+                },
+                warning = function(cond) {
+                  FALSE
+                }
+                finally = function(cond) {
+                  TRUE
+                }
+              )
+              1 + data_index ->
+                data_index
+              t(matrix(hrv1[-1],
+                       nrow = 5,
+                       ncol = (length(hrv1)-1)/5)) ->
+                data_ls[[data_index]]
+            }
+            # Merge data_ls elements into a data frame
+            #
+            # Still need to convert first column to Date + time
+            # Still need to convert columns 2:5 from character to numeric
+            #
+            # Remove duplicate data (if any exist)
+            #
+          }
+        }
+      }
+    }
+  }
+}
+
+
+
+```
+
+
+```{r}
+log_calculator <- function(x){
+    tryCatch(
+        expr = {
+            message(log(x))
+            message("Successfully executed the log(x) call.")
+        },
+        error = function(e){
+            message('Caught an error!')
+            print(e)
+        },
+        warning = function(w){
+            message('Caught an warning!')
+            print(w)
+        },
+        finally = {
+            message('All done, quitting.')
+        }
+    )    
+}
+
+log_calculator(2)
+log_calculator(-2)
+
+```
+
+
+# Joins
+

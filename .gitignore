@@ -1,0 +1,8 @@
+.Rhistory
+.RData
+.Ruserdata
+audio/*
+Documents/*
+ema/*
+fitbit_data/*
+.Rproj.user
