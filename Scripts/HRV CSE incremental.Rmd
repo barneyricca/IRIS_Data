@@ -1,0 +1,823 @@
+---
+title: "HRV CSE Incremental"
+output: word_document
+date: "2025-11-25"
+---
+
+Note from 2026-01-25:
+During IRIS 1031's time 1 session on Thursday, the 15th, I accidentally paired IRIS 1032's account to 1031's watch. IRIS 1032 had already begun to wear their watch starting on the 13th. This was only for about 5-10 minutes before the issue was corrected. The approximate time of the mistake was roughly 12:45 PM-1:30 PM on 01/15/2026. So the data within that time frame is not 1032's.
+
+Note from 2026-02-18
+Perhaps we can get the IBI from the Fitbit? Checking on that.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+for(packageName in c("aod", 
+                     "changepoint",
+                     "here",
+                     "igraph",              # Implements CSN (2009) power law
+                     "jsonlite",
+                     "magrittr",
+                     "rjson",
+#                     "tidyjson",
+                     "tidyverse")) {
+  if(!is.element(packageName,               # If package is NOT installed...
+                 installed.packages()[,1])) {
+    install.packages(packageName)           #  ...then install it.
+  }
+  library(packageName,                      # Add package to environment
+          character.only=TRUE,
+          quietly=TRUE,
+          verbose=FALSE)
+}
+
+# 2025-12-05 tidyjson seems to be almost abandoned, so it hasn't kept up with 
+#  tidyverse (specifically, purrr) changes. This is a work around.
+#  Be sure to do this first:
+#  remove.packages("tidyjson")
+# 
+#
+# The upgrade thing may be an issue; I dunno.
+#
+if(!is.element("remotes",
+               installed.packages()[,1])) {
+  install.packages("remotes")
+}
+if(!is.element("tidyjson",
+               installed.packages()[,1])) {
+  remotes::install_github("joranE/tidyjson",
+                          force = TRUE,
+                          upgrade = "always")
+}
+# The next is unnecessary here, but would normally be used.
+# library(tidyjson)
+
+i_am("Scripts/HRV CSE incremental.Rmd") # To help find all the files.
+
+options(show.signif.stars = FALSE)          # Don't stargaze
+options(digits = 3)                         # Round to 3 digits by default
+
+```
+
+```{r prepare}
+paste0("IRIS",                              # Numbers good as of 2026-02-23
+       1002:1038) ->
+  iris_names
+
+```
+
+```{r functions}
+hrv_simple <- function(vec) {                      # HR
+  # For our purposes HRV is the difference between this moment's HR and the
+  #  mean HR.
+  #
+  # What is the best way to do this?
+  #
+  #
+  # Should normalize the KS.statistic somehow
+  #
+  #
+  return(
+    abs(
+      vec - mean(vec,
+                 na.rm = TRUE)))
+}
+
+```
+
+# Get HR Data: First time
+
+The next two chunks are not evaluated; they only need to be evaluated if there is not yet a "Fitbit Data.RData" in the Output folder. If that file does not exist,
+then the next two chunks should be run once. After that, incremental updates may always be run.
+
+I guess I could put an if-file-exists in and shorten things. Later...
+
+
+Need to get: day (from the file name), minute, value
+
+For each json file
+  Read in file
+  Is there an IRISxxxx? (Currently, this is set up for IRIS1002 only).
+    If so, get the minutes and HR
+    Add to the df, along with the IRISxxxx
+Repeat for all Fitbit files
+
+```{r get_data_first_time}
+##| eval: FALSE
+# There's a potential problem at midnight; it gets reported as 0 minutes of one
+#  day, but it should be 1440 minutes (86400 seconds) of the day before.
+#
+# Using only the first data day of each file takes about 5 minutes on my UR
+#  laptop, for April 1 - June 29. (22 data days)
+#
+# Using all 7 data days of each file takes about a minute on my MacMini. (217
+#  data; much of that is repeated data.)
+#
+# Also, this spends a lot of time re-opening files. Perhaps the order of 
+#  looping can be changed so that each JSON file is only opened once. 
+
+list() ->
+  hr_ls ->
+  hrv_ls ->
+  sleep_ls
+
+dir(path = here("fitbit_data/"),
+    pattern = ".json") ->
+  file_names
+
+0 ->
+  file_index
+
+#
+Sys.time() -> s1                            # Monitoring time
+print(Sys.time())
+#
+
+for(file_name in file_names) {
+#
+#
+#
+# 2025-11-14: There is a problem with tidyjson and purrr. If the workaround in
+#  setup chunk doesn't work, then this can be used:
+#
+# suppressWarnings( # readLines() throws an incomplete final line warning.
+#   rjson::fromJSON(
+#     paste(
+#       readLines(
+#         here("../IRIS Data Backup/fitbit_data",
+#              file_name)),
+#       collapse = ""))) ->
+#   json_data
+#
+#
+#
+
+  tidyjson::read_json(
+    path = here("fitbit_data",
+                file_name),
+    format = "json") ->
+    json_data
+
+# If you want to monitor progress:
+print(file_name)
+print(Sys.time())
+#
+
+  file_index + 1 ->
+    file_index
+  
+  list() ->
+    hr_ls[[file_index]] ->
+    hrv_ls[[file_index]] ->
+    sleep_ls[[file_index]]
+
+    for(index2 in 1:length(iris_names)) {
+
+      # For use with tidyjson::read_json:
+      if(length(json_data[[2]][[1]][[iris_names[index2]]]$heart) > 0) {
+      json_data[[2]][[1]][[iris_names[index2]]]$heart ->
+        jd_ls
+#
+#
+# For use with rjson::fromJSON:
+#
+#    # if(length(json_data[[iris_names[index2]]]$heart) > 0) {
+#    #   json_data[[iris_names[index2]]]$heart ->
+#    #     jd_ls
+#
+#
+      # Each file contains up to the last week of data. We only need to work
+      #  with the first day in the file, so hr_ls[[1]] is sufficient. We don't
+      #  need the days 2-7, because those are in other files.
+      #
+      # However, given the amount of missingness, all days should be run, and
+      #  duplicates removed. This will take longer, but may provide more data.
+      #
+    
+      for(day_index in 1:length(jd_ls)) {
+        jd_ls[[day_index]] -> 
+          hr
+        hr$`activities-heart-intraday` -> 
+          time_hr_data
+
+        if(length(time_hr_data$dataset) > 1) {
+          data.frame(
+            IRIS = iris_names[index2],
+            Time =
+              strptime(
+                paste(
+                  hr$requested_date, 
+                  unlist(lapply(time_hr_data$dataset, `[[`, 1))),
+                format = "%Y-%m-%d %H:%M:%S") -
+              strptime(
+                paste(
+                  hr$requested_date, 
+                  "00:00:00"),
+                format = "%Y-%m-%d %H:%M:%S"),
+            HR = unlist(lapply(time_hr_data$dataset, `[[`, 2)),
+            Date = rep(
+              as.Date(hr$requested_date,
+                      format = "%Y-%m-%d"),
+              length(time_hr_data$dataset))) -> 
+            hr_ls[[file_index]][[index2]]
+        }
+      }
+    }
+    
+      # This goes with tidyjson:
+      if(length(json_data[[2]][[1]][[iris_names[index2]]]$hrv) > 0) {
+       json_data[[2]][[1]][[iris_names[index2]]]$hrv ->
+          jd_ls
+#
+#
+# This goes with rjson:
+#      # if(length(json_data[[iris_names[index2]]]$hrv) > 0) {
+#      #  json_data[[iris_names[index2]]]$hrv ->
+#      #     jd_ls
+#
+#
+#
+   # json_data[[2]][[1]]$IRIS1002$hrv ->
+   #  df
+  
+#      if(length(jd_ls) > 0) {
+      for(day_index in 1:length(jd_ls)) {
+          if(length(jd_ls[[day_index]]$hrv) > 0) {
+
+            jd_ls[[day_index]]$hrv[[1]] -> 
+              min_df
+            if(length(min_df) > 0) {
+              if(length(min_df$minutes) > 1) {
+#            file_index + 1 ->
+#              file_index
+
+                data.frame(
+                  IRIS = iris_names[index2],
+                  Date = rep(jd_ls[[day_index]]$requested_date,
+                             length(min_df$minutes)),
+                  Time = rep(NA, length(min_df$minutes)),
+                  rmssd = rep(NA, length(min_df$minutes)),
+                  cover = rep(NA, length(min_df$minutes)),
+                  lf = rep(NA, length(min_df$minutes)),
+                  hf = rep(NA, length(min_df$minutes))) ->
+                  hrv_ls[[file_index]]
+                for(minute_index in 1:length(min_df$minutes)) {
+                  # Get the time:
+                  str_split(
+                    str_split(
+                      string = min_df$minutes[[minute_index]]$minute,
+                      pattern = "T")[[1]][2],
+                      pattern = "[.]")[[1]][1] ->
+                    time_str
+                
+                  3600 * hour(strptime(time_str, format = "%H:%M:%S")) +
+                    60 * minute(strptime(time_str, format = "%H:%M:%S")) +
+                    second(strptime(time_str, format = "%H:%M:%S")) ->
+                    hrv_ls[[file_index]]$Time[minute_index]
+                  min_df$minutes[[minute_index]]$value$rmssd ->
+                    hrv_ls[[file_index]]$rmssd[minute_index]
+                  min_df$minutes[[minute_index]]$value$coverage ->
+                    hrv_ls[[file_index]]$cover[minute_index]
+                  min_df$minutes[[minute_index]]$value$lf ->
+                    hrv_ls[[file_index]]$lf[minute_index]
+                  min_df$minutes[[minute_index]]$value$hf ->
+                    hrv_ls[[file_index]]$hf[minute_index]
+                }
+              }
+            }
+          }
+        }
+      }
+      
+                  # For use with tidyjson::read_json:
+      if(length(json_data[[2]][[1]][[iris_names[index2]]]$sleep) > 0) {
+      json_data[[2]][[1]][[iris_names[index2]]]$sleep ->
+        jd_ls
+
+        
+        
+        
+
+
+#
+#
+# For use with rjson::fromJSON:
+#
+#    # if(length(json_data[[iris_names[index2]]]$sleep) > 0) {
+#    #   json_data[[iris_names[index2]]]$sleep ->
+#    #     jd_ls
+#
+#
+      # Each file contains up to the last week of data. We only need to work
+      #  with the first day in the file, so hr_ls[[1]] is sufficient. We don't
+      #  need the days 2-7, because those are in other files.
+      #
+      # However, given the amount of missingness, all days should be run, and
+      #  duplicates removed. This will take longer, but may provide more data.
+      #
+  
+      for(day_index in 1:length(jd_ls)) {
+        if(length(jd_ls[[day_index]]$sleep) > 0) {
+        jd_ls[[day_index]] -> 
+          sleep
+        sleep$sleep[[1]] -> 
+          time_sleep_data
+
+# > names(sleep$sleep[[1]])
+#  [1] "awakeCount"          "awakeDuration"       "awakeningsCount"    
+#  [4] "dateOfSleep"         "duration"            "efficiency"         
+#  [7] "endTime"             "isMainSleep"         "logId"              
+# [10] "minuteData"          "minutesAfterWakeup"  "minutesAsleep"      
+# [13] "minutesAwake"        "minutesToFallAsleep" "restlessCount"      
+# [16] "restlessDuration"    "startTime"           "timeInBed"  
+# The data are $dateTime and $value in $minuteData
+# The problem: dateTime gives hh:mm:ss since midnight, but this all of the
+#  sleep period show up on dateOfSleep, even if sleep goes past midnight.
+#  Hence, will need to correct the Date for many of these.
+
+
+        if(length(time_sleep_data$minuteData) > 1) {
+          data.frame(
+            IRIS = rep(iris_names[index2],
+                       length(time_sleep_data$minuteData)),
+            Time =
+              strptime(
+                paste(
+                  time_sleep_data$dateOfSleep, 
+                  unlist(lapply(time_sleep_data$minuteData, `[[`, 1))),
+                format = "%Y-%m-%d %H:%M:%S"), 
+            Sleep = unlist(lapply(time_sleep_data$minuteData, `[[`, 2)),
+            Date = rep(
+              as.Date(time_sleep_data$dateOfSleep,
+                      format = "%Y-%m-%d"),
+              length(time_sleep_data$minuteData))) -> 
+            sleep_ls[[file_index]][[index2]]
+        }
+        }
+      }
+    }
+
+    }
+  if(length(hr_ls[[file_index]]) > 0) {
+    iris_names[1:(length(hr_ls[[file_index]]))] ->
+      names(hr_ls[[file_index]])
+  }
+  # if(length(hrv_ls[[file_index]]) > 0) {
+  #   iris_names[1:(length(hrv_ls[[file_index]]))] ->
+  #     names(hrv_ls[[file_index]])
+  # }
+}
+
+# Slower, but it works.
+# Probably should skip the list above, and simply go straight to the rbind().
+# Whatever.
+
+hr_ls[[1]][[2]] ->
+  hr_df
+for(index1 in 2:length(hr_ls)) {
+  if(length(hr_ls[[index1]]) > 0) {
+    for(index2 in 1:length(hr_ls[[index1]])) {
+      if(length(hr_ls[[index1]][[index2]]) > 0) {
+        rbind(hr_df,
+              hr_ls[[index1]][[index2]]) ->
+          hr_df
+      }
+    }
+  }
+}
+
+hrv_ls[[2]] ->    # hrv_ls[[1]] is empty...different structure than hr_ls
+  hrv_df
+
+for(index1 in 3:length(hrv_ls)) {
+  if(length(hrv_ls[[index1]]) > 0) {
+#    if(nrow(hrv_ls[[index1]]) > 0) {
+      rbind(hrv_df,
+            hrv_ls[[index1]]) ->
+        hrv_df
+#    }
+  }
+}
+
+c("IRIS", "Date", "Time", "rmssd", "cover", "lf", "hf") -> 
+  colnames(hrv_df)
+
+
+sleep_ls[[2]][[2]] ->
+  sleep_df
+
+for(index1 in 3:length(sleep_ls)) {
+  if(length(sleep_ls[[index1]]) > 0) {
+    
+    for(index2 in 1:length(sleep_ls[[index1]])) {
+      
+      if(is.null(nrow(sleep_ls[[index1]][[index2]])) == FALSE) {
+        rbind(sleep_df,
+              sleep_ls[[index1]][[index2]]) ->
+          sleep_df
+      }
+    }
+  }
+}
+
+print(Sys.time() - s1)
+
+# De-dupe
+
+hr_df[!duplicated(hr_df), ] ->
+  hr_df
+hr_df %>%
+  arrange(Date, Time) ->
+  hr_df
+
+sleep_df[!duplicated(sleep_df), ] ->
+  sleep_df
+sleep_df %>%
+  arrange(Date, Time) ->
+  sleep_df
+
+hrv_df[!duplicated(hrv_df), ] ->
+  hrv_df
+hrv_df %>%
+  arrange(Date, Time) ->
+  hrv_df
+
+```
+
+
+```{r}
+#| eval: FALSE
+
+# Need to implement an incremental approach. Hence, save things.
+list(file_names,                            # A vector of processed dates.
+     hr_df,                                 # HR data for processed dates.
+     hrv_df,                                # HRV data for processed dates.
+     sleep_df) ->                           # Sleep data for processed dates.
+  data_ls
+save(data_ls,
+     file = here("Output/Fitbit Data.RData"))
+
+```
+
+# Fitbit Data: Incremental Updates
+
+```{r incremental_update}
+
+load(here("Output/Fitbit Data.RData"))
+
+# There's a potential problem at midnight; it gets reported as 0 minutes of one
+#  day, but it should be 1440 minutes (86400 seconds) of the day before.
+#
+# Using only the first data day of each file takes about 5 minutes on my UR
+#  laptop, for April 1 - June 29. (22 data days)
+#
+# Using all 7 data days of each file takes about a minute on my MacMini. (217
+#  data; much of that is repeated data.)
+#
+# Also, this spends a lot of time re-opening files. Perhaps the order of 
+#  looping can be changed so that each JSON file is only opened once. 
+
+list() ->
+  hr_ls ->
+  hrv_ls ->
+  sleep_ls
+
+dir(path = here("fitbit_data/"),
+    pattern = ".json") ->
+  file_names
+
+# Remove file names in data_ls[[1]] from file_names:
+file_names[!(file_names %in% data_ls[[1]])] ->
+  dum1
+
+# Load as above
+
+0 ->
+  file_index
+
+#
+Sys.time() -> s1                            # Monitoring time
+print(Sys.time())
+#
+
+for(file_name in file_names) {
+#
+#
+#
+# 2025-11-14: There is a problem with tidyjson and purrr. If the workaround in
+#  setup chunk doesn't work, then this can be used:
+#
+# suppressWarnings( # readLines() throws an incomplete final line warning.
+#   rjson::fromJSON(
+#     paste(
+#       readLines(
+#         here("../IRIS Data Backup/fitbit_data",
+#              file_name)),
+#       collapse = ""))) ->
+#   json_data
+#
+#
+#
+
+  tidyjson::read_json(
+    path = here("fitbit_data",
+                file_name),
+    format = "json") ->
+    json_data
+
+# If you want to monitor progress:
+print(file_name)
+# print(Sys.time())
+#
+
+  file_index + 1 ->
+    file_index
+  
+  list() ->
+    hr_ls[[file_index]] ->
+    hrv_ls[[file_index]] ->
+    sleep_ls[[file_index]]
+
+    for(index2 in 1:length(iris_names)) {
+
+      # For use with tidyjson::read_json:
+      if(length(json_data[[2]][[1]][[iris_names[index2]]]$heart) > 0) {
+      json_data[[2]][[1]][[iris_names[index2]]]$heart ->
+        jd_ls
+#
+#
+# For use with rjson::fromJSON:
+#
+#    # if(length(json_data[[iris_names[index2]]]$heart) > 0) {
+#    #   json_data[[iris_names[index2]]]$heart ->
+#    #     jd_ls
+#
+#
+      # Each file contains up to the last week of data. We only need to work
+      #  with the first day in the file, so hr_ls[[1]] is sufficient. We don't
+      #  need the days 2-7, because those are in other files.
+      #
+      # However, given the amount of missingness, all days should be run, and
+      #  duplicates removed. This will take longer, but may provide more data.
+      #
+    
+      for(day_index in 1:length(jd_ls)) {
+        jd_ls[[day_index]] -> 
+          hr
+        hr$`activities-heart-intraday` -> 
+          time_hr_data
+
+        if(length(time_hr_data$dataset) > 1) {
+          data.frame(
+            IRIS = iris_names[index2],
+            Time =
+              strptime(
+                paste(
+                  hr$requested_date, 
+                  unlist(lapply(time_hr_data$dataset, `[[`, 1))),
+                format = "%Y-%m-%d %H:%M:%S") -
+              strptime(
+                paste(
+                  hr$requested_date, 
+                  "00:00:00"),
+                format = "%Y-%m-%d %H:%M:%S"),
+            HR = unlist(lapply(time_hr_data$dataset, `[[`, 2)),
+            Date = rep(
+              as.Date(hr$requested_date,
+                      format = "%Y-%m-%d"),
+              length(time_hr_data$dataset))) -> 
+            hr_ls[[file_index]][[index2]]
+        }
+      }
+    }
+    
+        # This goes with tidyjson:
+      if(length(json_data[[2]][[1]][[iris_names[index2]]]$hrv) > 0) {
+       json_data[[2]][[1]][[iris_names[index2]]]$hrv ->
+          jd_ls
+#
+#
+# This goes with rjson:
+#      # if(length(json_data[[iris_names[index2]]]$hrv) > 0) {
+#      #  json_data[[iris_names[index2]]]$hrv ->
+#      #     jd_ls
+#
+#
+#
+   # json_data[[2]][[1]]$IRIS1002$hrv ->
+   #  df
+  
+#      if(length(jd_ls) > 0) {
+      for(day_index in 1:length(jd_ls)) {
+          if(length(jd_ls[[day_index]]$hrv) > 0) {
+
+            jd_ls[[day_index]]$hrv[[1]] -> 
+              min_df
+            if(length(min_df) > 0) {
+              if(length(min_df$minutes) > 1) {
+#            file_index + 1 ->
+#              file_index
+
+                data.frame(
+                  IRIS = iris_names[index2],
+                  Date = rep(jd_ls[[day_index]]$requested_date,
+                             length(min_df$minutes)),
+                  Time = rep(NA, length(min_df$minutes)),
+                  rmssd = rep(NA, length(min_df$minutes)),
+                  cover = rep(NA, length(min_df$minutes)),
+                  lf = rep(NA, length(min_df$minutes)),
+                  hf = rep(NA, length(min_df$minutes))) ->
+                  hrv_ls[[file_index]]
+                for(minute_index in 1:length(min_df$minutes)) {
+                  # Get the time:
+                  str_split(
+                    str_split(
+                      string = min_df$minutes[[minute_index]]$minute,
+                      pattern = "T")[[1]][2],
+                      pattern = "[.]")[[1]][1] ->
+                    time_str
+                
+                  3600 * hour(strptime(time_str, format = "%H:%M:%S")) +
+                    60 * minute(strptime(time_str, format = "%H:%M:%S")) +
+                    second(strptime(time_str, format = "%H:%M:%S")) ->
+                    hrv_ls[[file_index]]$Time[minute_index]
+                  min_df$minutes[[minute_index]]$value$rmssd ->
+                    hrv_ls[[file_index]]$rmssd[minute_index]
+                  min_df$minutes[[minute_index]]$value$coverage ->
+                    hrv_ls[[file_index]]$cover[minute_index]
+                  min_df$minutes[[minute_index]]$value$lf ->
+                    hrv_ls[[file_index]]$lf[minute_index]
+                  min_df$minutes[[minute_index]]$value$hf ->
+                    hrv_ls[[file_index]]$hf[minute_index]
+                }
+              }
+            }
+          }
+        }
+      }
+      
+            # For use with tidyjson::read_json:
+      if(length(json_data[[2]][[1]][[iris_names[index2]]]$sleep) > 0) {
+      json_data[[2]][[1]][[iris_names[index2]]]$sleep ->
+        jd_ls
+
+        
+        
+        
+
+
+#
+#
+# For use with rjson::fromJSON:
+#
+#    # if(length(json_data[[iris_names[index2]]]$sleep) > 0) {
+#    #   json_data[[iris_names[index2]]]$sleep ->
+#    #     jd_ls
+#
+#
+      # Each file contains up to the last week of data. We only need to work
+      #  with the first day in the file, so hr_ls[[1]] is sufficient. We don't
+      #  need the days 2-7, because those are in other files.
+      #
+      # However, given the amount of missingness, all days should be run, and
+      #  duplicates removed. This will take longer, but may provide more data.
+      #
+  
+      for(day_index in 1:length(jd_ls)) {
+        jd_ls[[day_index]] -> 
+          sleep
+        if(length(sleep$sleep) > 0) {
+          sleep$sleep[[1]] -> 
+            time_sleep_data
+
+# > names(sleep$sleep[[1]])
+#  [1] "awakeCount"          "awakeDuration"       "awakeningsCount"    
+#  [4] "dateOfSleep"         "duration"            "efficiency"         
+#  [7] "endTime"             "isMainSleep"         "logId"              
+# [10] "minuteData"          "minutesAfterWakeup"  "minutesAsleep"      
+# [13] "minutesAwake"        "minutesToFallAsleep" "restlessCount"      
+# [16] "restlessDuration"    "startTime"           "timeInBed"  
+# The data are $dateTime and $value in $minuteData
+# The problem: dateTime gives hh:mm:ss since midnight, but this all of the
+#  sleep period show up on dateOfSleep, even if sleep goes past midnight.
+#  Hence, will need to correct the Date for many of these.
+
+
+          if(length(time_sleep_data$minuteData) > 1) {
+          data.frame(
+            IRIS = rep(iris_names[index2],
+                       length(time_sleep_data$minuteData)),
+            Time =
+              strptime(
+                paste(
+                  time_sleep_data$dateOfSleep, 
+                  unlist(lapply(time_sleep_data$minuteData, `[[`, 1))),
+                format = "%Y-%m-%d %H:%M:%S"), 
+            Sleep = unlist(lapply(time_sleep_data$minuteData, `[[`, 2)),
+            Date = rep(
+              as.Date(time_sleep_data$dateOfSleep,
+                      format = "%Y-%m-%d"),
+              length(time_sleep_data$minuteData))) -> 
+            sleep_ls[[file_index]][[index2]]
+        }
+        }
+      }
+    }
+ 
+  }
+  if(length(hr_ls[[file_index]]) > 0) {
+    iris_names[1:(length(hr_ls[[file_index]]))] ->
+      names(hr_ls[[file_index]])
+  }
+  # if(length(hrv_ls[[file_index]]) > 0) {
+  #   iris_names[1:(length(hrv_ls[[file_index]]))] ->
+  #     names(hrv_ls[[file_index]])
+  # }
+}
+
+# Slower, but it works.
+# Probably should skip the list above, and simply go straight to the rbind().
+# Whatever.
+
+data_ls[[2]] ->
+  hr_df
+for(index1 in 1:length(hr_ls)) {
+  if(length(hr_ls[[index1]]) > 0) {
+    for(index2 in 1:length(hr_ls[[index1]])) {
+      if(length(hr_ls[[index1]][[index2]]) > 0) {
+        rbind(hr_df,
+              hr_ls[[index1]][[index2]]) ->
+          hr_df
+      }
+    }
+  }
+}
+
+data_ls[[3]] ->    # 
+  hrv_df
+
+for(index1 in 1:length(hrv_ls)) {
+  if(length(hrv_ls[[index1]]) > 0) {
+#    if(nrow(hrv_ls[[index1]]) > 0) {
+      rbind(hrv_df,
+            hrv_ls[[index1]]) ->
+        hrv_df
+#    }
+  }
+}
+
+sleep_ls[[2]][[2]] ->    # Day 1 is missing
+  sleep_df
+for(index1 in 3:length(sleep_ls)) {
+  if(length(sleep_ls[[index1]]) == 2) {
+    rbind(sleep_df,
+          sleep_ls[[index1]][[2]]) ->
+      sleep_df
+  } 
+  if(length(sleep_ls[[index1]]) == 1) {
+    rbind(sleep_df,
+          sleep_ls[[index1]][[1]]) ->
+      sleep_df
+  } 
+}
+
+c("IRIS", "Date", "Time", "rmssd", "cover", "lf", "hf") -> 
+  colnames(hrv_df)
+
+
+print(Sys.time() - s1)
+
+# De-dupe
+
+hr_df[!duplicated(hr_df), ] ->
+  hr_df
+hr_df %>%
+  arrange(Date, Time) ->
+  hr_df
+
+sleep_df[!duplicated(sleep_df),] ->
+  sleep_df
+sleep_df |>
+  arrange(Date, Time) ->
+  sleep_df
+
+hrv_df[!duplicated(hrv_df), ] ->
+  hrv_df
+hrv_df %>%
+  arrange(Date, Time) ->
+  hrv_df
+
+list(
+  c(data_ls[[1]], file_names),
+  hr_df,
+  hrv_df,
+  sleep_df) ->
+  data_ls
+save(data_ls, 
+     file = here("Output/Fitbit Data.RData"))
+
+
+```
+

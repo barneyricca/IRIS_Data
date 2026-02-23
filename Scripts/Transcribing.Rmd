@@ -1,0 +1,308 @@
+---
+title: "Transcribing"
+output: word_document
+date: "2025-05-27"
+---
+
+This expects the following folder structure.
+
+Project Folder (any name and any location; I use "Benight - IRIS")
+ +- audio
+ |- Scripts
+ 
+ This file must live in the "Scripts" folder.
+ The IRIS.Rproj file must be in the project folder.
+ All of the audio files are in the audio folder, each in its own folder (associated with the mobile code).
+
+```{r setup}
+#| include: FALSE
+#| 
+knitr::opts_chunk$set(echo = TRUE)
+
+for(packageName in c("av", 
+                     "devtools", 
+                     "here",
+                     "magrittr",
+                     "parallelly",
+#                     "purrr",
+                     "tidyverse")) {
+  if(!is.element(packageName,               # If package is NOT installed...
+                 installed.packages()[,1])) {
+    install.packages(packageName)           #  ...then install it.
+  }
+  library(packageName,                      # Add package to environment
+          character.only=TRUE,
+          quietly=TRUE,
+          verbose=FALSE)
+}
+
+i_am("Scripts/Transcribing.Rmd") # To help find all the files.
+
+options(show.signif.stars = FALSE)          # Don't stargaze
+options(digits = 3)                         # Round to 3 digits by default
+
+
+# You may need to do some additional installs (e.g., Rtools) before the
+#  next one works. (Or you may already have those on your system.)
+# If prompted to update, choose "1" to update all files.
+#
+# See: https://github.com/bnosac/audio.whisper for more information
+
+# The next requires some external tools to run properly. Hence, be prepared
+#  for some work to get this installed.
+if(!is.element("audio.whisper",
+               installed.packages()[,1])) {
+  if(packageVersion("audio.whisper") != "0.5.0") {
+    devtools::install_github("bnosac/audio.whisper",
+                             force = TRUE)
+  }
+}
+
+library(audio.whisper)
+```
+
+# Audio
+
+BTW, the audio files have names something like this:
+
+aud_9891105_1732744605.m4a
+
+The "1732744605" is the instance ID in EMA data. All audio files can be found in the corresponding mbl_cod folder under the audio folder.
+
+There are 2 formats for the audio data; M4A and 3GP. These appear to be from IOS and Android phones, respectively.
+
+There are many extra folders; the ones without audio get ignored.
+
+## Get the File List
+```{r fileList}
+c(
+  dir(path = here(),
+      pattern = "m4a",
+      recursive = TRUE),                    # Look in the subfolders
+  dir(path = here(),
+      pattern = "3gp",
+      recursive = TRUE)) ->
+  audio_file_names
+
+```
+
+Only process the new names
+
+- Read in all the old names
+```{r}
+dir(path = here("audio"),                   # These are all the transcriptions.
+    pattern = ".RData",
+    recursive = TRUE) ->                    # Look in the subfolders
+transcript_names
+
+read_csv(here("audio/Bad Names.csv")) ->    # These are known bad files
+  bad_names_df
+
+#
+# Do we need to switch from a data frame here?
+#
+
+vector(mode = "character") ->
+  audio_to_skip
+
+for(transcript in transcript_names) {       # For each transcription
+  load(here("audio", transcript))           # Load transcript & file names
+  
+  c(audio_to_skip,                          # Combine the file names in that
+    unlist(transcription_data$names)) ->    #  transcript with the other bad
+    audio_to_skip                           #  or completed file names
+}
+
+audio_file_names[!(audio_file_names %in% audio_to_skip)] ->
+  audio_file_names
+
+# This has no effect...why, I wonder...
+audio_file_names[!(audio_file_names %in% bad_names_df$name)] ->
+  audio_file_names
+
+```
+
+## Prep for Transcription
+
+ Also, note that whisper() can use GPU with a parameter in trans() (NVidia and Metal; the latter is on my MacMini.)
+
+```{r whisperPrep}
+#| include: FALSE
+# This chunk takes some time, but it stores the result and only calls up the
+#  stored file after it has been created.
+#
+# The newest version of audio.whisper (0.5.0) has more, and apparently faster, 
+#  models. However, installation will take some fudging (must cmake) right now
+#  (as of 2026-02-15, it isn't on CRAN).
+#
+# Might be sufficient to use the "medium" model; it would be much faster.
+
+  whisper("large-v3-turbo") ->              # Smaller models take less time.
+    model2                                  #  Roughly 40% faster than large-v2
+
+```
+
+
+## Transcribe
+
+```{r processAudio}
+
+#length(audio_file_names)
+#rm(list = "transcriptions_ls")
+
+list() ->
+  transcriptions_ls
+list() ->
+  audio_ls
+# I have about enough memory to a bunch at a time. (Each one takes about
+#  10 MB.) Just to be careful, I do 1:500, then 501:1000, then 1001:1500, etc.
+#  Check the length of audio_file_names to know the maximum to go to.
+# These take a while, though; about 60 files per hour get done. Need
+#  to make this an incremental thing after the first one.
+#
+# 2026-01-30: audio_file_name[368] has a glitch, so skip that one for now.
+#  Others have glitches, too, so those are left out. Those that are left out
+#  will be apparent from the names of the saved files.
+# 
+# Something happens around 1234. I dunno what, but there is a run of bad
+#  files.
+#
+#
+# Ah...be very careful: It was possible that the next could overwrite an 
+#  existing set of data. Hence, append the date to the name.
+1 -> start_index
+167 -> end_index                          # 167 today (2026-02-23)
+
+for(index in start_index:end_index) {
+  audio_file_names[index] ->
+    file_name
+  print(paste(index, "-",                   # Keeping track
+              Sys.time()))
+  
+  unlist(                                   # Do we want to index anything?
+    strsplit(x = file_name,                 #  Could split only on the period,
+             split = "[_./]+")) ->          #  but there may be reasons to
+    name_parts                              #  use the other parts later.
+
+  if(name_parts[6] == "m4a") {              # Convert iOS audio
+    av_audio_convert(
+      audio = here(file_name),
+      format = "WAV",                       # Required for whisper
+      sample_rate = 16000,                  # Required for whisper
+      output = here("temp.wav"),
+      verbose = FALSE)
+  } 
+  if(name_parts[6] == "3gp") {              # Convert Android audio
+    av_audio_convert(
+      audio = here(file_name),
+      format = "WAV",                       # Required for whisper
+      sample_rate = 16000,                  # Required for whisper
+      output = here("temp.wav"),
+      verbose = FALSE)
+  }
+
+  capture.output(                           # Don't show all the output.
+    predict(object = model2,                 # Transcribe
+            newdata = here("temp.wav"),     # temp audio file
+            language = "en",                # English
+            n_threads = availableCores()) -># Use multiple threads if possible.
+    transcriptions_ls[[index]])             # Store with information
+  file_name -> audio_ls[[index]]
+}
+
+list("names" = audio_ls,
+     "transcripts" = transcriptions_ls) ->
+  transcription_data
+save(transcription_data,
+     file = here(paste0("audio/Transcripts ",
+                        start_index,
+                        " - ",
+                        end_index,
+                        " - ",
+                        Sys.Date(),
+                        ".RData")))
+
+```
+
+```{r bad_files}
+
+# First Time Through
+# c(400, 772, 1156, 1160, 1196, 1302, 1304,
+#   1306, 1307, 1310, 1311, 1312, 1313, 1314,
+#   1315, 1318, 1319, 1321, 1322, 1323, 1342,
+#   1634, 1638, 1651, 1659, 1667, 1731) ->
+#   bad_nums
+# 
+# data.frame(
+#   name = audio_file_names[bad_nums]) ->
+#   bad_names
+# 
+# write_csv(bad_names,
+#           file = here("audio/Bad Names.csv"))
+
+
+# After First Time Through, run this part:
+c() ->           # Fill in any bad numbers here
+  bad_nums
+
+read_csv(here("audio/Bad Names.csv")) ->
+  bad_names
+
+c(bad_names$names,
+  audio_file_names[bad_nums]) ->
+  bad_names$names
+
+write_csv(bad_names,
+          file = here("audio/Bad Names.csv"))
+
+```
+
+
+## Miscellaneous notes
+
+The transcription output, when using large-v3-turbo:
+
+
+
+For some other potential analyses, see: Schultebraucks, K., Yadav, V., Shalev, A. Y., Bonanno, G. A., & Galatzer-Levy, I. R. (2022). Deep learning-based classification of posttraumatic stress disorder and depression following trauma utilizing visual and auditory markers of arousal and mood. Psychological Medicine, 52(5), 957–967. https://doi.org/10.1017/S0033291720002718
+
+Chip also indicates that there are analyses he would like done.
+
+Jenna ran transcripts through [LiWC](https://www.liwc.app)
+
+PyPi SpeechRecognition may be useful. However, we may be able to do it in R:
+
+- https://rpubs.com/Ian_M/919060
+- https://reintech.io/blog/voice-recognition-with-r-guide-for-developers (especially the seewave package)
+- https://reintech.io/blog/speech-recognition-with-r-tutorial
+- package:voice
+- https://stackoverflow.com/questions/77710695/trying-to-transcribe-audio-files-in-r
+- https://www.r-bloggers.com/2025/11/readtextgrid-now-uses-c-and-chatgpt-helped
+
+Following this post seems to work:
+https://www.bnosac.be/index.php/blog/105-audio-transcription-with-whisper-from-r
+
+Some of the data files are quite noisy; they perhaps should be low-pass filtered or de-hissed before processing, but it doesn't seem to be a problem yet.
+
+Conversions with the large model takes much longer than the medium model, which in turn takes about 20 times as long as the tiny model. Is it worth it? I don't know (b/c I haven't investigated it yet.)
+
+
+```{r speedtest}
+#| eval: FALSE
+Sys.time()
+  capture.output(                           # Don't show all the output.
+    predict(object = model,                 # Transcribe w/ large-v2
+            newdata = here("temp.wav"),     # temp audio file
+            language = "en",                # English
+            n_threads = availableCores()) -># Use multiple threads if possible.
+    trans1)             # Store with information
+Sys.time()
+  capture.output(                           # Don't show all the output.
+    predict(object = model2,                # Transcribe w/ large-v3-turbo
+            newdata = here("temp.wav"),     # temp audio file
+            language = "en",                # English
+            n_threads = availableCores()) -># Use multiple threads if possible.
+    trans2)             # Store with information
+Sys.time()
+
+```
